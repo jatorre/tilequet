@@ -143,6 +143,18 @@ tilequet-io validate output.parquet
 
 ---
 
+## Viewer
+
+View TileQuet files directly in your browser — no server needed. The viewer reads Parquet files via HTTP range requests using [hyparquet](https://github.com/hyparam/hyparquet) and renders tiles with [deck.gl](https://deck.gl).
+
+Supports **raster tiles** (PNG, JPEG, WebP) and **vector tiles** (PBF/MVT) with automatic format detection from TileQuet metadata.
+
+<div style="margin-top: 1rem;">
+<a href="{{ site.baseurl }}/viewer.html" class="btn btn-primary">Open Viewer</a>
+</div>
+
+---
+
 ## Part of the RaQuet Family
 
 TileQuet follows the same design principles as [RaQuet](https://raquet.io), which stores raster data in Parquet:

@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>TileQuet Viewer</title>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Client-side TileQuet file viewer powered by hyparquet and deck.gl">
+    <script src="https://unpkg.com/deck.gl@9.0.16/dist.min.js"></script>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
+        #container { width: 100vw; height: 100vh; position: relative; }
+        #map { width: 100%; height: 100%; background: #e8e8e8; }
+        #controls {
+            position: absolute; top: 10px; left: 10px;
+            background: rgba(255,255,255,0.95); color: #333;
+            padding: 20px; border-radius: 12px;
+            max-width: 400px; z-index: 100;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+        }
+        #controls h2 {
+            margin: 0 0 5px 0;
+            font-size: 1.4em;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        #controls .subtitle { font-size: 0.85em; color: #666; margin-bottom: 15px; }
+        #controls label { display: block; font-size: 0.85em; font-weight: 500; margin-bottom: 5px; color: #555; }
+        #controls select, #controls input[type="text"] {
+            width: 100%; padding: 10px 12px; margin-bottom: 12px;
+            border: 1px solid #ddd; border-radius: 6px; font-size: 13px;
+        }
+        #controls input[type="text"]:focus {
+            outline: none;
+            border-color: #E6A23C;
+            box-shadow: 0 0 0 3px rgba(230,162,60,0.1);
+        }
+        #controls button {
+            width: 100%; padding: 12px 20px; cursor: pointer;
+            background: #E6A23C; color: white; border: none;
+            border-radius: 6px; font-size: 14px; font-weight: 500;
+            transition: background 0.2s;
+        }
+        #controls button:hover { background: #C48520; }
+        #controls button:disabled { background: #ccc; cursor: not-allowed; }
+        #status { margin-top: 15px; font-size: 13px; color: #666; white-space: pre-wrap; line-height: 1.5; }
+        #stats {
+            position: absolute; bottom: 10px; left: 10px;
+            background: rgba(0,0,0,0.8); color: #E6A23C;
+            padding: 10px 15px; border-radius: 8px;
+            font-family: 'SF Mono', Monaco, monospace;
+            font-size: 12px; z-index: 100;
+        }
+        .loading { color: #e6a23c !important; }
+        .error { color: #f56c6c !important; }
+        .success { color: #67c23a !important; }
+        #info-link {
+            display: block;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+            font-size: 0.85em;
+            color: #666;
+        }
+        #info-link a {
+            color: #C48520;
+            text-decoration: none;
+        }
+        #info-link a:hover { text-decoration: underline; }
+        .tile-type-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .tile-type-raster { background: #e8f5e9; color: #2e7d32; }
+        .tile-type-vector { background: #e3f2fd; color: #1565c0; }
+        .tile-type-3d { background: #fce4ec; color: #c62828; }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="map"></div>
+        <div id="controls">
+            <h2>TileQuet Viewer</h2>
+            <div class="subtitle">Client-side viewer using HTTP range requests</div>
+
+            <label>Sample Files</label>
+            <select id="sampleSelect" onchange="selectSample()">
+                <option value="">-- Select a sample --</option>
+                <option value="https://github.com/jatorre/tilequet/releases/download/v0.1.0-samples/firenze.parquet">Firenze (vector, PBF)</option>
+            </select>
+
+            <label>Or enter TileQuet file URL</label>
+            <input type="text" id="parquetUrl" placeholder="https://example.com/tiles.parquet">
+            <button id="loadBtn" onclick="loadDataset()">Load Dataset</button>
+
+            <div id="status">Enter a URL or select a sample file to get started.</div>
+            <div id="info-link">
+                <a href="index.html">&larr; Back to TileQuet documentation</a><br>
+                <a href="https://github.com/jatorre/tilequet" target="_blank">GitHub Repository</a><br>
+                <span style="margin-top: 10px; display: inline-block; color: #666;">An open source project by <a href="https://carto.com" target="_blank">CARTO</a></span>
+            </div>
+        </div>
+        <div id="stats">Ready</div>
+    </div>
+
+    <script type="module">
+        // Hyparquet imports
+        let hyparquet = null;
+        let compressors = {};
+
+        async function loadHyparquet() {
+            if (!hyparquet) {
+                hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet/+esm');
+                try {
+                    const comp = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors/+esm');
+                    compressors = {
+                        SNAPPY: comp.decompressSnappy,
+                        GZIP: comp.decompressGzip || comp.gunzip,
+                        ZSTD: comp.decompressZstd
+                    };
+                } catch (e) {
+                    console.warn('Could not load compressors:', e.message);
+                }
+            }
+            return hyparquet;
+        }
+
+        // State
+        let parquetUrl = '';
+        let parquetFile = null;
+        let parquetMetadata = null;
+        let tiquetMetadata = null; // TileQuet metadata from tile=0 row
+        let rowGroupIndex = [];
+        let tileType = 'raster';
+        let tileFormat = 'png';
+        let minZoom = 0, maxZoom = 20;
+        let dataBounds = null;
+        let deckInstance = null;
+
+        // Stats
+        let tilesLoaded = 0;
+        let tilesRendered = 0;
+        let bytesTransferred = 0;
+        let httpRequests = 0;
+
+        // Cache & batching
+        let tileCache = new Map();
+        let pendingRequests = new Map();
+        let batchTimeout = null;
+        const BATCH_DELAY = 50;
+
+        // Cancellation
+        let batchGeneration = 0;
+        let activeBatches = new Set();
+        let cancelDebounceTimeout = null;
+
+        // UI elements
+        const statusEl = document.getElementById('status');
+        const statsEl = document.getElementById('stats');
+        const loadBtn = document.getElementById('loadBtn');
+
+        function setStatus(msg, type = '') {
+            statusEl.textContent = msg;
+            statusEl.className = type;
+        }
+
+        function formatBytes(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(2) + ' MB';
+        }
+
+        function updateStats() {
+            const overhead = tilesRendered > 0 ? (httpRequests / tilesRendered).toFixed(1) : '0';
+            statsEl.textContent = `Tiles: ${tilesRendered} | HTTP: ${httpRequests} (${overhead}/tile) | ${formatBytes(bytesTransferred)}`;
+        }
+
+        // ==========================================
+        // QUADBIN conversion (matching Python quadbin library)
+        // ==========================================
+        function tileToQuadbin(x, y, z) {
+            const mode = 9n << 59n;
+            const resolution = BigInt(z) << 52n;
+            let index = 0n;
+            for (let i = 0; i < z; i++) {
+                index |= ((BigInt(x) >> BigInt(i)) & 1n) << BigInt(2 * i);
+                index |= ((BigInt(y) >> BigInt(i)) & 1n) << BigInt(2 * i + 1);
+            }
+            const shift = 52 - 2 * z;
+            if (shift > 0) {
+                index = index << BigInt(shift);
+                index |= (1n << BigInt(shift)) - 1n;
+            }
+            return mode | resolution | index;
+        }
+
+        function quadbinToTile(cell) {
+            const cellBigInt = BigInt(cell);
+            const res = Number((cellBigInt >> 52n) & 0x1Fn);
+            let x = 0n, y = 0n;
+            let index = cellBigInt & ((1n << 52n) - 1n);
+            const shift = 52 - 2 * res;
+            if (shift > 0) index = index >> BigInt(shift);
+            for (let i = 0; i < res; i++) {
+                x |= ((index >> BigInt(2 * i)) & 1n) << BigInt(i);
+                y |= ((index >> BigInt(2 * i + 1)) & 1n) << BigInt(i);
+            }
+            return { z: res, x: Number(x), y: Number(y) };
+        }
+
+        // Decode int64 from binary array (little-endian)
+        function decodeInt64(bytes) {
+            if (!bytes || bytes.length < 8) return null;
+            const view = new DataView(bytes.buffer, bytes.byteOffset, 8);
+            const low = view.getUint32(0, true);
+            const high = view.getInt32(4, true);
+            return BigInt(low) + (BigInt(high) << 32n);
+        }
+
+        // ==========================================
+        // Row group indexing (for efficient tile lookup)
+        // ==========================================
+        function buildRowGroupIndex(metadata) {
+            const index = [];
+            let rowStart = 0;
+
+            for (let i = 0; i < metadata.row_groups.length; i++) {
+                const rg = metadata.row_groups[i];
+                const numRows = Number(rg.num_rows);
+                const rowEnd = rowStart + numRows;
+
+                // Find the 'tile' column statistics
+                const tileCol = rg.columns.find(c =>
+                    c.meta_data?.path_in_schema?.includes('tile') ||
+                    c.meta_data?.path_in_schema?.[0] === 'tile'
+                );
+
+                let minTile = null, maxTile = null;
+                if (tileCol?.meta_data?.statistics) {
+                    const stats = tileCol.meta_data.statistics;
+                    if (stats.min_value instanceof Uint8Array) {
+                        minTile = decodeInt64(stats.min_value);
+                        maxTile = decodeInt64(stats.max_value);
+                    } else if (typeof stats.min_value === 'bigint') {
+                        minTile = stats.min_value;
+                        maxTile = stats.max_value;
+                    } else if (stats.min_value != null) {
+                        minTile = BigInt(stats.min_value);
+                        maxTile = BigInt(stats.max_value);
+                    }
+                }
+
+                index.push({ rowGroupId: i, minTile, maxTile, rowStart, rowEnd, numRows });
+                rowStart = rowEnd;
+            }
+
+            return index;
+        }
+
+        function findRowGroupsForTile(tileId) {
+            const tileBigInt = BigInt(tileId);
+            const matching = [];
+
+            for (const rg of rowGroupIndex) {
+                if (rg.minTile === null || rg.maxTile === null) {
+                    matching.push(rg);
+                } else if (tileBigInt >= rg.minTile && tileBigInt <= rg.maxTile) {
+                    matching.push(rg);
+                }
+            }
+
+            return matching;
+        }
+
+        // ==========================================
+        // HTTP request tracking
+        // ==========================================
+        async function createTrackedAsyncBuffer(url) {
+            const { asyncBufferFromUrl } = await loadHyparquet();
+            const baseBuffer = await asyncBufferFromUrl({ url });
+            const originalSlice = baseBuffer.slice.bind(baseBuffer);
+
+            baseBuffer.slice = async function(start, end) {
+                httpRequests++;
+                bytesTransferred += end - start;
+                updateStats();
+                return await originalSlice(start, end);
+            };
+
+            return baseBuffer;
+        }
+
+        // ==========================================
+        // MIME type mapping
+        // ==========================================
+        function getMimeType(format) {
+            const map = {
+                'png': 'image/png',
+                'jpeg': 'image/jpeg',
+                'jpg': 'image/jpeg',
+                'webp': 'image/webp',
+                'pbf': 'application/x-protobuf',
+                'mvt': 'application/x-protobuf',
+                'glb': 'model/gltf-binary',
+                'gltf': 'model/gltf+json',
+                'b3dm': 'application/octet-stream',
+                'pnts': 'application/octet-stream',
+            };
+            return map[format] || 'application/octet-stream';
+        }
+
+        // ==========================================
+        // Batch tile fetching from Parquet
+        // ==========================================
+        async function fetchTilesBatch(tileIds) {
+            const { parquetRead } = await loadHyparquet();
+            const results = new Map();
+
+            // Group tile IDs by row group
+            const rowGroupRequests = new Map();
+            for (const tileId of tileIds) {
+                const matchingRGs = findRowGroupsForTile(tileId);
+                for (const rg of matchingRGs) {
+                    if (!rowGroupRequests.has(rg.rowGroupId)) {
+                        rowGroupRequests.set(rg.rowGroupId, { rg, tileIds: new Set() });
+                    }
+                    rowGroupRequests.get(rg.rowGroupId).tileIds.add(tileId.toString());
+                }
+            }
+
+            for (const [rgId, { rg, tileIds: rgTileIds }] of rowGroupRequests) {
+                try {
+                    let rowGroupData = null;
+                    await parquetRead({
+                        file: parquetFile,
+                        rowStart: rg.rowStart,
+                        rowEnd: rg.rowEnd,
+                        columns: ['tile', 'data'],
+                        compressors,
+                        utf8: false,
+                        onComplete: (result) => { rowGroupData = result; }
+                    });
+
+                    if (!rowGroupData) continue;
+
+                    const numRows = Array.isArray(rowGroupData)
+                        ? rowGroupData.length
+                        : (rowGroupData.tile?.length || 0);
+
+                    for (let i = 0; i < numRows; i++) {
+                        let rowTileId, rowData;
+
+                        if (Array.isArray(rowGroupData)) {
+                            rowTileId = rowGroupData[i][0]?.toString();
+                            rowData = rowGroupData[i][1];
+                        } else {
+                            rowTileId = rowGroupData.tile?.[i]?.toString();
+                            rowData = rowGroupData.data?.[i];
+                        }
+
+                        if (!rgTileIds.has(rowTileId)) continue;
+
+                        if (rowData) {
+                            // Convert to Uint8Array if needed
+                            let bytes;
+                            if (rowData instanceof Uint8Array) {
+                                bytes = rowData;
+                            } else if (rowData instanceof ArrayBuffer) {
+                                bytes = new Uint8Array(rowData);
+                            } else if (ArrayBuffer.isView(rowData)) {
+                                bytes = new Uint8Array(rowData.buffer, rowData.byteOffset, rowData.byteLength);
+                            } else if (Array.isArray(rowData)) {
+                                bytes = new Uint8Array(rowData);
+                            } else {
+                                continue;
+                            }
+                            results.set(rowTileId, bytes);
+                        }
+                    }
+                } catch (e) {
+                    if (e.name === 'AbortError') break;
+                    console.error(`Error reading row group ${rgId}:`, e);
+                }
+            }
+
+            return results;
+        }
+
+        // ==========================================
+        // Raster tile rendering
+        // ==========================================
+        async function renderRasterTile(tileData) {
+            const mimeType = getMimeType(tileFormat);
+            const blob = new Blob([tileData], { type: mimeType });
+            try {
+                return await createImageBitmap(blob);
+            } catch (e) {
+                console.warn('Failed to decode raster tile:', e);
+                return null;
+            }
+        }
+
+        // ==========================================
+        // Vector tile (PBF/MVT) parsing
+        // Lightweight MVT parser — no external dependency
+        // ==========================================
+
+        // Protobuf varint decoder
+        function readVarint(buf, pos) {
+            let result = 0, shift = 0, b;
+            do {
+                b = buf[pos.offset++];
+                result |= (b & 0x7f) << shift;
+                shift += 7;
+            } while (b >= 0x80);
+            return result;
+        }
+
+        function readSVarint(buf, pos) {
+            const num = readVarint(buf, pos);
+            return (num >>> 1) ^ -(num & 1);
+        }
+
+        function skipField(buf, pos, wireType) {
+            if (wireType === 0) { readVarint(buf, pos); }
+            else if (wireType === 1) { pos.offset += 8; }
+            else if (wireType === 2) { const len = readVarint(buf, pos); pos.offset += len; }
+            else if (wireType === 5) { pos.offset += 4; }
+        }
+
+        function parseMVTGeometry(geomArray, geomType, extent) {
+            const coords = [];
+            let cx = 0, cy = 0;
+            let ring = [];
+            let i = 0;
+
+            while (i < geomArray.length) {
+                const cmdInt = geomArray[i++];
+                const cmd = cmdInt & 0x7;
+                const count = cmdInt >> 3;
+
+                if (cmd === 1) { // MoveTo
+                    for (let j = 0; j < count; j++) {
+                        cx += ((geomArray[i] >> 1) ^ -(geomArray[i] & 1)); i++;
+                        cy += ((geomArray[i] >> 1) ^ -(geomArray[i] & 1)); i++;
+                        if (geomType === 1) { // Point
+                            coords.push([cx / extent, cy / extent]);
+                        } else {
+                            if (ring.length > 0) coords.push(ring);
+                            ring = [[cx / extent, cy / extent]];
+                        }
+                    }
+                } else if (cmd === 2) { // LineTo
+                    for (let j = 0; j < count; j++) {
+                        cx += ((geomArray[i] >> 1) ^ -(geomArray[i] & 1)); i++;
+                        cy += ((geomArray[i] >> 1) ^ -(geomArray[i] & 1)); i++;
+                        ring.push([cx / extent, cy / extent]);
+                    }
+                } else if (cmd === 7) { // ClosePath
+                    if (ring.length > 0) {
+                        ring.push(ring[0]);
+                    }
+                }
+            }
+
+            if (ring.length > 0 && geomType !== 1) coords.push(ring);
+            return coords;
+        }
+
+        function tileToLngLat(tileX, tileY, tileZ, fx, fy) {
+            const n = Math.pow(2, tileZ);
+            const lng = ((tileX + fx) / n) * 360 - 180;
+            const latRad = Math.atan(Math.sinh(Math.PI * (1 - 2 * (tileY + fy) / n)));
+            const lat = latRad * 180 / Math.PI;
+            return [lng, lat];
+        }
+
+        function parseMVT(buffer, tileX, tileY, tileZ) {
+            // Decompress gzip if needed
+            let buf;
+            if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
+                try {
+                    // Use pako if available, otherwise try DecompressionStream
+                    buf = decompressGzip(buffer);
+                } catch (e) {
+                    console.warn('Failed to decompress gzip MVT tile:', e);
+                    return [];
+                }
+            } else {
+                buf = buffer;
+            }
+
+            const features = [];
+            const pos = { offset: 0 };
+
+            while (pos.offset < buf.length) {
+                const tag = readVarint(buf, pos);
+                const fieldNum = tag >> 3;
+                const wireType = tag & 0x7;
+
+                if (fieldNum === 3 && wireType === 2) {
+                    // Layer message
+                    const layerLen = readVarint(buf, pos);
+                    const layerEnd = pos.offset + layerLen;
+                    const layerFeatures = parseLayer(buf, pos.offset, layerEnd, tileX, tileY, tileZ);
+                    features.push(...layerFeatures);
+                    pos.offset = layerEnd;
+                } else {
+                    skipField(buf, pos, wireType);
+                }
+            }
+
+            return features;
+        }
+
+        function parseLayer(buf, start, end, tileX, tileY, tileZ) {
+            const pos = { offset: start };
+            let layerName = '';
+            let extent = 4096;
+            const keys = [];
+            const values = [];
+            const rawFeatures = [];
+
+            while (pos.offset < end) {
+                const tag = readVarint(buf, pos);
+                const fieldNum = tag >> 3;
+                const wireType = tag & 0x7;
+
+                if (fieldNum === 1 && wireType === 2) {
+                    // Layer name
+                    const len = readVarint(buf, pos);
+                    layerName = new TextDecoder().decode(buf.slice(pos.offset, pos.offset + len));
+                    pos.offset += len;
+                } else if (fieldNum === 2 && wireType === 2) {
+                    // Feature
+                    const len = readVarint(buf, pos);
+                    rawFeatures.push({ start: pos.offset, end: pos.offset + len });
+                    pos.offset += len;
+                } else if (fieldNum === 3 && wireType === 2) {
+                    // Key
+                    const len = readVarint(buf, pos);
+                    keys.push(new TextDecoder().decode(buf.slice(pos.offset, pos.offset + len)));
+                    pos.offset += len;
+                } else if (fieldNum === 4 && wireType === 2) {
+                    // Value
+                    const len = readVarint(buf, pos);
+                    values.push(parseValue(buf, pos.offset, pos.offset + len));
+                    pos.offset += len;
+                } else if (fieldNum === 5 && wireType === 0) {
+                    // Extent
+                    extent = readVarint(buf, pos);
+                } else {
+                    skipField(buf, pos, wireType);
+                }
+            }
+
+            // Parse features
+            const features = [];
+            for (const rf of rawFeatures) {
+                const feature = parseFeature(buf, rf.start, rf.end, keys, values, extent, tileX, tileY, tileZ, layerName);
+                if (feature) features.push(feature);
+            }
+            return features;
+        }
+
+        function parseValue(buf, start, end) {
+            const pos = { offset: start };
+            while (pos.offset < end) {
+                const tag = readVarint(buf, pos);
+                const fieldNum = tag >> 3;
+                const wireType = tag & 0x7;
+
+                if (fieldNum === 1 && wireType === 2) {
+                    const len = readVarint(buf, pos);
+                    const val = new TextDecoder().decode(buf.slice(pos.offset, pos.offset + len));
+                    pos.offset += len;
+                    return val;
+                } else if (fieldNum === 2 && wireType === 5) {
+                    const view = new DataView(buf.buffer, buf.byteOffset + pos.offset, 4);
+                    pos.offset += 4;
+                    return view.getFloat32(0, true);
+                } else if (fieldNum === 3 && wireType === 1) {
+                    const view = new DataView(buf.buffer, buf.byteOffset + pos.offset, 8);
+                    pos.offset += 8;
+                    return view.getFloat64(0, true);
+                } else if (fieldNum === 4 && wireType === 0) {
+                    return BigInt(readVarint(buf, pos));
+                } else if (fieldNum === 5 && wireType === 0) {
+                    return readVarint(buf, pos);
+                } else if (fieldNum === 6 && wireType === 0) {
+                    const v = readVarint(buf, pos);
+                    return (v >>> 1) ^ -(v & 1);
+                } else if (fieldNum === 7 && wireType === 0) {
+                    return readVarint(buf, pos) !== 0;
+                } else {
+                    skipField(buf, pos, wireType);
+                }
+            }
+            return null;
+        }
+
+        function parseFeature(buf, start, end, keys, values, extent, tileX, tileY, tileZ, layerName) {
+            const pos = { offset: start };
+            let geomType = 0;
+            let geometry = [];
+            const properties = { _layer: layerName };
+            let tagsArray = [];
+
+            while (pos.offset < end) {
+                const tag = readVarint(buf, pos);
+                const fieldNum = tag >> 3;
+                const wireType = tag & 0x7;
+
+                if (fieldNum === 2 && wireType === 2) {
+                    // Tags (packed uint32)
+                    const len = readVarint(buf, pos);
+                    const tagEnd = pos.offset + len;
+                    while (pos.offset < tagEnd) {
+                        tagsArray.push(readVarint(buf, pos));
+                    }
+                } else if (fieldNum === 3 && wireType === 0) {
+                    geomType = readVarint(buf, pos);
+                } else if (fieldNum === 4 && wireType === 2) {
+                    // Geometry (packed uint32)
+                    const len = readVarint(buf, pos);
+                    const geomEnd = pos.offset + len;
+                    while (pos.offset < geomEnd) {
+                        geometry.push(readVarint(buf, pos));
+                    }
+                } else {
+                    skipField(buf, pos, wireType);
+                }
+            }
+
+            // Decode tags
+            for (let i = 0; i < tagsArray.length - 1; i += 2) {
+                const key = keys[tagsArray[i]];
+                const val = values[tagsArray[i + 1]];
+                if (key !== undefined) {
+                    properties[key] = typeof val === 'bigint' ? Number(val) : val;
+                }
+            }
+
+            // Parse geometry and convert to lng/lat
+            const geomTypeNames = { 1: 'Point', 2: 'LineString', 3: 'Polygon' };
+            if (!geomTypeNames[geomType] || geometry.length === 0) return null;
+
+            const tileCoords = parseMVTGeometry(geometry, geomType, extent);
+            if (tileCoords.length === 0) return null;
+
+            // Convert tile-relative coordinates to lng/lat
+            let geoJsonGeom;
+            if (geomType === 1) {
+                // Points
+                const lngLats = tileCoords.map(([fx, fy]) => tileToLngLat(tileX, tileY, tileZ, fx, fy));
+                if (lngLats.length === 1) {
+                    geoJsonGeom = { type: 'Point', coordinates: lngLats[0] };
+                } else {
+                    geoJsonGeom = { type: 'MultiPoint', coordinates: lngLats };
+                }
+            } else if (geomType === 2) {
+                // Lines
+                const lngLatRings = tileCoords.map(ring =>
+                    ring.map(([fx, fy]) => tileToLngLat(tileX, tileY, tileZ, fx, fy))
+                );
+                if (lngLatRings.length === 1) {
+                    geoJsonGeom = { type: 'LineString', coordinates: lngLatRings[0] };
+                } else {
+                    geoJsonGeom = { type: 'MultiLineString', coordinates: lngLatRings };
+                }
+            } else if (geomType === 3) {
+                // Polygons
+                const lngLatRings = tileCoords.map(ring =>
+                    ring.map(([fx, fy]) => tileToLngLat(tileX, tileY, tileZ, fx, fy))
+                );
+                geoJsonGeom = { type: 'Polygon', coordinates: lngLatRings };
+            }
+
+            return {
+                type: 'Feature',
+                properties,
+                geometry: geoJsonGeom,
+            };
+        }
+
+        // Simple gzip decompression using DecompressionStream API
+        async function decompressGzipAsync(buffer) {
+            const ds = new DecompressionStream('gzip');
+            const writer = ds.writable.getWriter();
+            writer.write(buffer);
+            writer.close();
+            const reader = ds.readable.getReader();
+            const chunks = [];
+            while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+            }
+            const total = chunks.reduce((sum, c) => sum + c.length, 0);
+            const result = new Uint8Array(total);
+            let offset = 0;
+            for (const chunk of chunks) {
+                result.set(chunk, offset);
+                offset += chunk.length;
+            }
+            return result;
+        }
+
+        // Synchronous gzip using pako-like inflate if available, fallback to sync workaround
+        let _pakoLoaded = false;
+        let _pako = null;
+
+        async function ensurePako() {
+            if (!_pakoLoaded) {
+                try {
+                    _pako = await import('https://cdn.jsdelivr.net/npm/pako@2.1.0/+esm');
+                } catch (e) {
+                    console.warn('pako not available, using DecompressionStream');
+                }
+                _pakoLoaded = true;
+            }
+        }
+
+        function decompressGzip(buffer) {
+            if (_pako) {
+                return _pako.inflate(buffer);
+            }
+            throw new Error('pako not loaded');
+        }
+
+        // ==========================================
+        // Batch execution with cancellation
+        // ==========================================
+        async function executeBatch() {
+            if (pendingRequests.size === 0) return;
+
+            const myGeneration = batchGeneration;
+            activeBatches.add(myGeneration);
+
+            const requests = new Map(pendingRequests);
+            pendingRequests.clear();
+
+            const tileIds = [];
+            for (const [key, req] of requests) {
+                const [z, x, y] = key.split('/').map(Number);
+                const quadbinId = tileToQuadbin(x, y, z);
+                req.quadbinId = quadbinId;
+                req.generation = myGeneration;
+                req.z = z;
+                req.x = x;
+                req.y = y;
+                tileIds.push(quadbinId);
+            }
+
+            try {
+                const results = await fetchTilesBatch(tileIds);
+
+                if (!activeBatches.has(myGeneration)) {
+                    for (const req of requests.values()) req.resolve(null);
+                    return;
+                }
+
+                for (const [cacheKey, req] of requests) {
+                    if (req.generation !== myGeneration || !activeBatches.has(myGeneration)) {
+                        req.resolve(null);
+                        continue;
+                    }
+
+                    const tileData = results.get(req.quadbinId.toString());
+                    if (!tileData) {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                        continue;
+                    }
+
+                    let rendered;
+                    if (tileType === 'vector') {
+                        // Parse MVT to GeoJSON features
+                        try {
+                            // Handle gzip-compressed PBF
+                            let buf = tileData;
+                            if (buf[0] === 0x1f && buf[1] === 0x8b) {
+                                buf = await decompressGzipAsync(buf);
+                            }
+                            rendered = parseMVT(buf, req.x, req.y, req.z);
+                        } catch (e) {
+                            console.warn('Failed to parse vector tile:', e);
+                            rendered = null;
+                        }
+                    } else {
+                        // Raster: decode as image
+                        rendered = await renderRasterTile(tileData);
+                    }
+
+                    if (rendered) {
+                        tileCache.set(cacheKey, rendered);
+                        tilesLoaded++;
+                        tilesRendered++;
+                        updateStats();
+                        req.resolve(rendered);
+                    } else {
+                        tileCache.set(cacheKey, null);
+                        req.resolve(null);
+                    }
+                }
+            } catch (e) {
+                console.error('Batch fetch error:', e);
+                for (const req of requests.values()) req.resolve(null);
+            } finally {
+                activeBatches.delete(myGeneration);
+            }
+        }
+
+        function cancelStaleBatches() {
+            batchGeneration++;
+            activeBatches.clear();
+            for (const req of pendingRequests.values()) req.resolve(null);
+            pendingRequests.clear();
+            if (batchTimeout) {
+                clearTimeout(batchTimeout);
+                batchTimeout = null;
+            }
+        }
+
+        // ==========================================
+        // deck.gl tile callback
+        // ==========================================
+        function getTileData({ index }) {
+            const { x, y, z } = index;
+            if (z < minZoom || z > maxZoom) return null;
+
+            const cacheKey = `${z}/${x}/${y}`;
+            if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
+
+            return new Promise((resolve) => {
+                pendingRequests.set(cacheKey, { resolve });
+                if (batchTimeout) clearTimeout(batchTimeout);
+                batchTimeout = setTimeout(executeBatch, BATCH_DELAY);
+            });
+        }
+
+        // ==========================================
+        // Color palette for vector layers
+        // ==========================================
+        const LAYER_COLORS = [
+            [230, 162, 60],    // amber
+            [66, 133, 244],    // blue
+            [52, 168, 83],     // green
+            [234, 67, 53],     // red
+            [156, 39, 176],    // purple
+            [255, 152, 0],     // orange
+            [0, 150, 136],     // teal
+            [121, 85, 72],     // brown
+        ];
+
+        let layerColorMap = {};
+        let nextColorIdx = 0;
+
+        function getLayerColor(layerName) {
+            if (!layerColorMap[layerName]) {
+                layerColorMap[layerName] = LAYER_COLORS[nextColorIdx % LAYER_COLORS.length];
+                nextColorIdx++;
+            }
+            return layerColorMap[layerName];
+        }
+
+        // ==========================================
+        // Sample file selector
+        // ==========================================
+        window.selectSample = function() {
+            const select = document.getElementById('sampleSelect');
+            const input = document.getElementById('parquetUrl');
+            if (select.value) input.value = select.value;
+        };
+
+        // ==========================================
+        // Load dataset
+        // ==========================================
+        window.loadDataset = async function() {
+            parquetUrl = document.getElementById('parquetUrl').value.trim();
+            if (!parquetUrl) {
+                setStatus('Please enter a URL', 'error');
+                return;
+            }
+
+            loadBtn.disabled = true;
+            setStatus('Loading hyparquet...', 'loading');
+
+            try {
+                await ensurePako();
+                const { parquetMetadataAsync } = await loadHyparquet();
+
+                setStatus('Connecting to file...', 'loading');
+                parquetFile = await createTrackedAsyncBuffer(parquetUrl);
+
+                setStatus('Reading Parquet metadata...', 'loading');
+                parquetMetadata = await parquetMetadataAsync(parquetFile);
+
+                // Build row group index
+                rowGroupIndex = buildRowGroupIndex(parquetMetadata);
+
+                // Read TileQuet metadata from tile=0 row (first row, file is sorted)
+                setStatus('Reading TileQuet metadata...', 'loading');
+                tiquetMetadata = null;
+                try {
+                    const { parquetRead } = await loadHyparquet();
+                    let firstRow = null;
+                    await parquetRead({
+                        file: parquetFile,
+                        rowStart: 0,
+                        rowEnd: 1,
+                        columns: ['tile', 'metadata'],
+                        compressors,
+                        onComplete: (data) => { firstRow = data; }
+                    });
+
+                    let metaStr = null;
+                    if (Array.isArray(firstRow) && firstRow[0]) {
+                        const tileId = firstRow[0][0];
+                        const metaValue = firstRow[0][1];
+                        // Verify this is the metadata row (tile=0)
+                        if (tileId === 0 || tileId === 0n) {
+                            if (metaValue) {
+                                const decoder = new TextDecoder();
+                                metaStr = typeof metaValue === 'string' ? metaValue : decoder.decode(new Uint8Array(metaValue));
+                            }
+                        }
+                    } else if (firstRow?.tile && firstRow.tile[0] !== undefined) {
+                        const tileId = firstRow.tile[0];
+                        if (tileId === 0 || tileId === 0n) {
+                            const metaBytes = firstRow.metadata?.[0];
+                            if (metaBytes) {
+                                const decoder = new TextDecoder();
+                                metaStr = typeof metaBytes === 'string' ? metaBytes : decoder.decode(new Uint8Array(metaBytes));
+                            }
+                        }
+                    }
+
+                    if (metaStr) {
+                        tiquetMetadata = JSON.parse(metaStr);
+                    }
+                } catch (e) {
+                    console.warn('Could not read TileQuet metadata:', e);
+                }
+
+                // Configure from metadata
+                if (tiquetMetadata) {
+                    tileType = tiquetMetadata.tile_type || 'raster';
+                    tileFormat = tiquetMetadata.tile_format || 'png';
+                    minZoom = tiquetMetadata.min_zoom ?? 0;
+                    maxZoom = tiquetMetadata.max_zoom ?? 20;
+                    dataBounds = tiquetMetadata.bounds || null;
+                    console.log(`TileQuet: type=${tileType}, format=${tileFormat}, zoom=${minZoom}-${maxZoom}`);
+                } else {
+                    console.warn('No TileQuet metadata found, using defaults');
+                    tileType = 'raster';
+                    tileFormat = 'png';
+                }
+
+                // Reset state
+                tileCache.clear();
+                tilesLoaded = 0;
+                tilesRendered = 0;
+                bytesTransferred = 0;
+                httpRequests = 0;
+                batchGeneration = 0;
+                activeBatches.clear();
+                pendingRequests.clear();
+                layerColorMap = {};
+                nextColorIdx = 0;
+
+                // Calculate initial view
+                let initialView = { longitude: 0, latitude: 0, zoom: 2 };
+                if (dataBounds && dataBounds.length === 4) {
+                    const [minLon, minLat, maxLon, maxLat] = dataBounds;
+                    initialView = {
+                        longitude: (minLon + maxLon) / 2,
+                        latitude: (minLat + maxLat) / 2,
+                        zoom: Math.min(minZoom + 2, maxZoom)
+                    };
+                } else if (tiquetMetadata?.center && tiquetMetadata.center.length >= 3) {
+                    initialView = {
+                        longitude: tiquetMetadata.center[0],
+                        latitude: tiquetMetadata.center[1],
+                        zoom: tiquetMetadata.center[2]
+                    };
+                }
+
+                // Build status message
+                const typeBadge = tileType === 'vector' ? 'VECTOR' : tileType === '3d' ? '3D' : 'RASTER';
+                const name = tiquetMetadata?.name || 'Unknown';
+                const numTiles = tiquetMetadata?.num_tiles || Number(parquetMetadata.num_rows);
+                setStatus(
+                    `${name}\n` +
+                    `Type: ${typeBadge} (${tileFormat})\n` +
+                    `Tiles: ${numTiles.toLocaleString()}\n` +
+                    `Zoom: ${minZoom}-${maxZoom}\n` +
+                    `Row Groups: ${rowGroupIndex.length}`,
+                    'success'
+                );
+
+                // Create deck.gl layers based on tile type
+                const layers = [
+                    // Basemap
+                    new globalThis.deck.TileLayer({
+                        id: 'basemap',
+                        data: 'https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}@2x.png',
+                        minZoom: 0,
+                        maxZoom: 19,
+                        tileSize: 256,
+                        renderSubLayers: props => {
+                            const { tile, data } = props;
+                            const { west, south, east, north } = tile.bbox;
+                            return new globalThis.deck.BitmapLayer({
+                                id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                image: data,
+                                bounds: [west, south, east, north]
+                            });
+                        }
+                    }),
+                ];
+
+                if (tileType === 'vector') {
+                    // Vector tile layer
+                    layers.push(new globalThis.deck.TileLayer({
+                        id: 'tilequet-vector',
+                        getTileData,
+                        minZoom,
+                        maxZoom,
+                        tileSize: 256,
+                        extent: dataBounds,
+                        refinementStrategy: 'no-overlap',
+                        maxRequests: 6,
+                        maxCacheSize: 200,
+                        renderSubLayers: props => {
+                            const { tile, data } = props;
+                            if (!data || !Array.isArray(data) || data.length === 0) return null;
+
+                            return new globalThis.deck.GeoJsonLayer({
+                                id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                data,
+                                filled: true,
+                                stroked: true,
+                                getFillColor: d => {
+                                    const c = getLayerColor(d.properties?._layer || 'default');
+                                    return [...c, 120];
+                                },
+                                getLineColor: d => {
+                                    const c = getLayerColor(d.properties?._layer || 'default');
+                                    return [...c, 200];
+                                },
+                                getLineWidth: 1,
+                                lineWidthUnits: 'pixels',
+                                getPointRadius: 3,
+                                pointRadiusUnits: 'pixels',
+                                pickable: true,
+                            });
+                        }
+                    }));
+                } else if (tileType === '3d') {
+                    // 3D tiles — basic display using raster approach for b3dm/pnts
+                    // Full 3D Tiles support would need a tileset.json tree
+                    setStatus(
+                        statusEl.textContent + '\n\nNote: 3D tile preview is experimental.',
+                        'success'
+                    );
+                    layers.push(new globalThis.deck.TileLayer({
+                        id: 'tilequet-3d',
+                        getTileData,
+                        minZoom,
+                        maxZoom,
+                        tileSize: 256,
+                        extent: dataBounds,
+                        refinementStrategy: 'no-overlap',
+                        maxRequests: 6,
+                        renderSubLayers: props => {
+                            const { tile, data } = props;
+                            if (!data) return null;
+                            const { west, south, east, north } = tile.bbox;
+                            return new globalThis.deck.BitmapLayer({
+                                id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                image: data,
+                                bounds: [west, south, east, north]
+                            });
+                        }
+                    }));
+                } else {
+                    // Raster tile layer (default)
+                    layers.push(new globalThis.deck.TileLayer({
+                        id: 'tilequet-raster',
+                        getTileData,
+                        minZoom,
+                        maxZoom,
+                        tileSize: 256,
+                        extent: dataBounds,
+                        refinementStrategy: 'no-overlap',
+                        maxRequests: 6,
+                        maxCacheSize: 200,
+                        renderSubLayers: props => {
+                            const { tile, data } = props;
+                            if (!data) return null;
+                            const { west, south, east, north } = tile.bbox;
+                            return new globalThis.deck.BitmapLayer({
+                                id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
+                                image: data,
+                                bounds: [west, south, east, north]
+                            });
+                        }
+                    }));
+                }
+
+                // Create deck.gl instance
+                if (deckInstance) deckInstance.finalize();
+
+                deckInstance = new globalThis.deck.DeckGL({
+                    container: 'map',
+                    initialViewState: { ...initialView, pitch: 0, bearing: 0 },
+                    controller: true,
+                    onViewStateChange: ({ viewState, interactionState }) => {
+                        if (interactionState?.isPanning || interactionState?.isZooming) {
+                            if (batchTimeout) {
+                                clearTimeout(batchTimeout);
+                                batchTimeout = null;
+                            }
+                            if (cancelDebounceTimeout) clearTimeout(cancelDebounceTimeout);
+                            cancelDebounceTimeout = setTimeout(cancelStaleBatches, 100);
+                        }
+                        return viewState;
+                    },
+                    getTooltip: tileType === 'vector' ? ({ object }) => {
+                        if (!object || !object.properties) return null;
+                        const props = { ...object.properties };
+                        delete props._layer;
+                        const entries = Object.entries(props).slice(0, 10);
+                        if (entries.length === 0) return null;
+                        return {
+                            text: entries.map(([k, v]) => `${k}: ${v}`).join('\n'),
+                            style: {
+                                backgroundColor: 'rgba(0,0,0,0.8)',
+                                color: '#fff',
+                                fontSize: '12px',
+                                padding: '8px 12px',
+                                borderRadius: '4px',
+                            }
+                        };
+                    } : undefined,
+                    layers
+                });
+
+                updateStats();
+                loadBtn.disabled = false;
+                window.deckInstance = deckInstance;
+
+            } catch (e) {
+                setStatus(`Error: ${e.message}`, 'error');
+                console.error(e);
+                loadBtn.disabled = false;
+            }
+        };
+
+        // Check for URL parameter
+        const urlParams = new URLSearchParams(window.location.search);
+        const fileUrl = urlParams.get('url');
+        if (fileUrl) {
+            document.getElementById('parquetUrl').value = fileUrl;
+            loadDataset();
+        }
+
+        // Initialize
+        updateStats();
+    </script>
+</body>
+</html>
