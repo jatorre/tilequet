@@ -16,7 +16,7 @@ from typing import Any
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 from .mbtiles2tilequet import tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -275,21 +275,33 @@ def convert(
     if verbose:
         logger.info("Fetched %d tiles (%d skipped)", tiles_fetched, tiles_skipped)
 
+    center = [
+        (effective_bounds[0] + effective_bounds[2]) / 2,
+        (effective_bounds[1] + effective_bounds[3]) / 2,
+        effective_min_zoom,
+    ]
+
+    tilejson = build_tilejson(
+        bounds=effective_bounds,
+        center=center,
+        min_zoom=effective_min_zoom,
+        max_zoom=effective_max_zoom,
+        name=meta.name,
+        description=meta.description,
+    )
+
     metadata = create_metadata(
         tile_type=tile_type,
         tile_format=meta.tile_format,
         bounds=effective_bounds,
-        center=[
-            (effective_bounds[0] + effective_bounds[2]) / 2,
-            (effective_bounds[1] + effective_bounds[3]) / 2,
-            effective_min_zoom,
-        ],
+        center=center,
         min_zoom=effective_min_zoom,
         max_zoom=effective_max_zoom,
         num_tiles=len(tiles),
         name=meta.name,
         description=meta.description,
         source_format="arcgis_mapserver",
+        tilejson=tilejson,
     )
 
     write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)

@@ -12,7 +12,7 @@ import sqlite3
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 from .mbtiles2tilequet import detect_tile_format, tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -140,6 +140,16 @@ def convert(
                 min_zoom,
             ]
 
+        # Build TileJSON 3.0.0
+        tilejson = build_tilejson(
+            bounds=bounds,
+            center=center,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            name=gpkg_name,
+            description=gpkg_desc,
+        )
+
         # Build metadata
         metadata = create_metadata(
             tile_type=tile_type,
@@ -152,6 +162,7 @@ def convert(
             name=gpkg_name,
             description=gpkg_desc,
             source_format="geopackage",
+            tilejson=tilejson,
         )
 
         # Write TileQuet file

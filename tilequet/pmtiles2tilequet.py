@@ -11,7 +11,7 @@ import logging
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +147,22 @@ def convert(
             description = pm_metadata.get("description")
             attribution = pm_metadata.get("attribution")
 
+        # Build TileJSON 3.0.0 from source metadata
+        vector_layers = None
+        if pm_metadata:
+            vector_layers = pm_metadata.get("vector_layers")
+
+        tilejson = build_tilejson(
+            bounds=bounds,
+            center=center,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            name=name,
+            description=description,
+            attribution=attribution,
+            vector_layers=vector_layers,
+        )
+
         metadata = create_metadata(
             tile_type=tile_type,
             tile_format=tile_format,
@@ -160,6 +176,7 @@ def convert(
             attribution=attribution,
             layers=layers,
             source_format="pmtiles",
+            tilejson=tilejson,
         )
 
         # Write TileQuet file

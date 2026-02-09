@@ -10,7 +10,7 @@ import sqlite3
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 
 logger = logging.getLogger(__name__)
 
@@ -143,6 +143,43 @@ def convert(
         if verbose:
             logger.info("Read %d tiles from MBTiles", len(tiles))
 
+        # Extract vector_layers from MBTiles json metadata
+        vector_layers = None
+        layers = None
+        if tile_type == "vector" and "json" in mb_meta:
+            import json
+
+            try:
+                mb_json = json.loads(mb_meta["json"])
+                vector_layers = mb_json.get("vector_layers")
+                if vector_layers:
+                    layers = []
+                    for vl in vector_layers:
+                        layer = {"id": vl["id"]}
+                        if "description" in vl:
+                            layer["description"] = vl["description"]
+                        if "minzoom" in vl:
+                            layer["minzoom"] = vl["minzoom"]
+                        if "maxzoom" in vl:
+                            layer["maxzoom"] = vl["maxzoom"]
+                        if "fields" in vl:
+                            layer["fields"] = vl["fields"]
+                        layers.append(layer)
+            except (json.JSONDecodeError, KeyError):
+                pass
+
+        # Build TileJSON 3.0.0
+        tilejson = build_tilejson(
+            bounds=bounds,
+            center=center,
+            min_zoom=min_zoom,
+            max_zoom=max_zoom,
+            name=mb_meta.get("name"),
+            description=mb_meta.get("description"),
+            attribution=mb_meta.get("attribution"),
+            vector_layers=vector_layers,
+        )
+
         # Build metadata
         metadata = create_metadata(
             tile_type=tile_type,
@@ -155,31 +192,10 @@ def convert(
             name=mb_meta.get("name"),
             description=mb_meta.get("description"),
             attribution=mb_meta.get("attribution"),
+            layers=layers,
             source_format="mbtiles",
+            tilejson=tilejson,
         )
-
-        # Handle vector tile layers from metadata
-        if tile_type == "vector" and "json" in mb_meta:
-            import json
-
-            try:
-                tilejson = json.loads(mb_meta["json"])
-                if "vector_layers" in tilejson:
-                    layers = []
-                    for vl in tilejson["vector_layers"]:
-                        layer = {"id": vl["id"]}
-                        if "description" in vl:
-                            layer["description"] = vl["description"]
-                        if "minzoom" in vl:
-                            layer["minzoom"] = vl["minzoom"]
-                        if "maxzoom" in vl:
-                            layer["maxzoom"] = vl["maxzoom"]
-                        if "fields" in vl:
-                            layer["fields"] = vl["fields"]
-                        layers.append(layer)
-                    metadata["layers"] = layers
-            except (json.JSONDecodeError, KeyError):
-                pass
 
         # Write TileQuet file
         write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)

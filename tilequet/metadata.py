@@ -27,6 +27,55 @@ TILEQUET_SCHEMA = pa.schema([
 ])
 
 
+def build_tilejson(
+    *,
+    bounds: list[float] | None = None,
+    center: list[float] | None = None,
+    min_zoom: int = 0,
+    max_zoom: int = 22,
+    name: str | None = None,
+    description: str | None = None,
+    attribution: str | None = None,
+    vector_layers: list[dict] | None = None,
+) -> dict[str, Any]:
+    """Build a TileJSON 3.0.0 compliant object.
+
+    This is stored in the row-0 metadata so downstream tools can
+    reconstruct a standards-compliant TileJSON for serving.
+
+    Args:
+        bounds: [west, south, east, north] in WGS84.
+        center: [lon, lat, zoom].
+        min_zoom: Minimum zoom level.
+        max_zoom: Maximum zoom level.
+        name: Human-readable name.
+        description: Human-readable description.
+        attribution: Attribution string.
+        vector_layers: TileJSON vector_layers array.
+
+    Returns:
+        TileJSON 3.0.0 dictionary.
+    """
+    tj: dict[str, Any] = {
+        "tilejson": "3.0.0",
+        "tiles": [],
+        "bounds": bounds or [-180, -85.051129, 180, 85.051129],
+        "minzoom": min_zoom,
+        "maxzoom": max_zoom,
+    }
+    if center is not None:
+        tj["center"] = center
+    if name is not None:
+        tj["name"] = name
+    if description is not None:
+        tj["description"] = description
+    if attribution is not None:
+        tj["attribution"] = attribution
+    if vector_layers is not None:
+        tj["vector_layers"] = vector_layers
+    return tj
+
+
 def create_metadata(
     *,
     tile_type: str,

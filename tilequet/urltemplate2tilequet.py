@@ -14,7 +14,7 @@ from typing import Any
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 from .mbtiles2tilequet import detect_tile_format, tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -202,20 +202,30 @@ def convert(
             "Fetched %d tiles (%d skipped/empty)", tiles_fetched, tiles_skipped
         )
 
+    # Build TileJSON 3.0.0
+    center = [
+        (bbox[0] + bbox[2]) / 2,
+        (bbox[1] + bbox[3]) / 2,
+        actual_min_zoom,
+    ]
+    tilejson = build_tilejson(
+        bounds=list(bbox),
+        center=center,
+        min_zoom=actual_min_zoom,
+        max_zoom=actual_max_zoom,
+    )
+
     # Build metadata
     metadata = create_metadata(
         tile_type=tile_type,
         tile_format=tile_format,
         bounds=list(bbox),
-        center=[
-            (bbox[0] + bbox[2]) / 2,
-            (bbox[1] + bbox[3]) / 2,
-            actual_min_zoom,
-        ],
+        center=center,
         min_zoom=actual_min_zoom,
         max_zoom=actual_max_zoom,
         num_tiles=len(tiles),
         source_format="url_template",
+        tilejson=tilejson,
     )
 
     # Write TileQuet file
