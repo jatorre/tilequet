@@ -1,0 +1,62 @@
+[project]
+name = "tilequet-io"
+version = "0.1.0"
+description = "TileQuet - Map tiles in Parquet format with QUADBIN spatial indexing"
+readme = "README.md"
+license = {text = "BSD-3-Clause"}
+requires-python = ">=3.10"
+authors = [
+    {name = "Javier de la Torre"},
+]
+keywords = ["tiles", "parquet", "geospatial", "quadbin", "vector-tiles", "mbtiles", "pmtiles", "gis", "carto"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: BSD License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+dependencies = [
+    "click>=8",
+    "pyarrow>=19",
+    "quadbin>=0.2.2",
+]
+
+[project.urls]
+Homepage = "https://jatorre.github.io/tilequet"
+Documentation = "https://jatorre.github.io/tilequet"
+Repository = "https://github.com/jatorre/tilequet"
+Issues = "https://github.com/jatorre/tilequet/issues"
+
+[project.optional-dependencies]
+pmtiles = ["pmtiles>=3"]
+rich = ["rich>=13"]
+mapserver = ["httpx>=0.25"]
+tiles3d = ["httpx>=0.25"]
+url = ["httpx>=0.25"]
+all = [
+    "pmtiles>=3",
+    "rich>=13",
+    "httpx>=0.25",
+]
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["tilequet"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests requiring external credentials or services",
+]
+
+[project.scripts]
+tilequet-io = "tilequet.cli:main"
