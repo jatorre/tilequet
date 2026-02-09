@@ -93,6 +93,7 @@
             <select id="sampleSelect" onchange="selectSample()">
                 <option value="">-- Select a sample --</option>
                 <option value="https://storage.googleapis.com/tilequet-samples/firenze.parquet">Firenze (vector, PBF)</option>
+                <option value="https://storage.googleapis.com/tilequet-samples/dragon_3d.parquet">Dragon LOD (3D, b3dm)</option>
             </select>
 
             <label>Or enter TileQuet file URL</label>
@@ -119,11 +120,7 @@
                 hyparquet = await import('https://cdn.jsdelivr.net/npm/hyparquet/+esm');
                 try {
                     const comp = await import('https://cdn.jsdelivr.net/npm/hyparquet-compressors/+esm');
-                    compressors = {
-                        SNAPPY: comp.decompressSnappy,
-                        GZIP: comp.decompressGzip || comp.gunzip,
-                        ZSTD: comp.decompressZstd
-                    };
+                    compressors = comp.compressors;
                 } catch (e) {
                     console.warn('Could not load compressors:', e.message);
                 }
@@ -803,9 +800,11 @@
 
         // ==========================================
         // 3D Tiles tileset.json handling
-        // Pre-fetch tiles from Parquet, create blob URLs,
-        // rewrite tileset.json URIs, feed to Tile3DLayer
+        // Pre-fetch tiles from Parquet, rewrite URIs to
+        // intercepted URLs with proper extensions, feed to Tile3DLayer
         // ==========================================
+
+        // (3D tile rendering uses ScenegraphLayer directly — see loadDataset)
 
         // Collect all QUADBIN cell IDs from rewritten tileset.json
         function collectQuadbinIdsFromTileset(tilesetJson) {
@@ -826,52 +825,21 @@
             return ids;
         }
 
-        // Pre-fetch all 3D tile data from Parquet → Map<quadbinIdStr, blobUrl>
+        // Pre-fetch all 3D tile data from Parquet → Map<quadbinIdStr, Uint8Array>
         async function prefetch3DTiles(quadbinIdStrs) {
-            const idToBlobUrl = new Map();
+            const idToData = new Map();
             const bigIntIds = [...quadbinIdStrs].map(id => BigInt(id));
 
             const results = await fetchTilesBatch(bigIntIds);
 
             for (const [tileIdStr, data] of results) {
                 if (!data) continue;
-
-                // Detect MIME type from magic bytes
-                let mimeType = 'application/octet-stream';
-                if (data.length >= 4) {
-                    const magic = String.fromCharCode(data[0], data[1], data[2], data[3]);
-                    if (magic === 'glTF') mimeType = 'model/gltf-binary';
-                }
-
-                const blob = new Blob([data], { type: mimeType });
-                const url = URL.createObjectURL(blob);
-                idToBlobUrl.set(tileIdStr, url);
-                trackObjectURL(url);
-
+                idToData.set(tileIdStr, data);
                 tilesLoaded++;
                 bytesTransferred += data.length;
             }
 
-            return idToBlobUrl;
-        }
-
-        // Rewrite tileset.json URIs from QUADBIN cell IDs to blob URLs
-        function rewriteTilesetBlobUrls(tilesetJson, idToBlobUrl) {
-            const rewritten = JSON.parse(JSON.stringify(tilesetJson));
-            function walk(node) {
-                const content = node.content || {};
-                const uri = content.uri || content.url;
-                if (uri && idToBlobUrl.has(uri)) {
-                    content.uri = idToBlobUrl.get(uri);
-                    delete content.url;
-                }
-                for (const child of (node.children || [])) {
-                    walk(child);
-                }
-            }
-            const root = rewritten.root || rewritten;
-            walk(root);
-            return rewritten;
+            return idToData;
         }
 
         // Simple gzip decompression using DecompressionStream API
@@ -1257,50 +1225,98 @@
                             statusEl.textContent + '\n\nNo tileset_json in metadata.\n3D tiles require the tileset.json tree.',
                             'error'
                         );
-                    } else if (!globalThis.deck.Tile3DLayer) {
-                        setStatus(
-                            statusEl.textContent + '\n\nTile3DLayer not available in this deck.gl build.',
-                            'error'
-                        );
                     } else {
-                        // Collect QUADBIN cell IDs from the rewritten tileset.json
+                        // 3D Tiles: pre-fetch all tiles, extract GLB from b3dm,
+                        // render directly with ScenegraphLayer at the ECEF-derived position
                         const quadbinIds = collectQuadbinIdsFromTileset(tilesetJson);
                         setStatus(`Fetching ${quadbinIds.size} 3D tiles from Parquet...`, 'loading');
 
-                        // Pre-fetch all tiles and create blob URLs
-                        const idToBlobUrl = await prefetch3DTiles(quadbinIds);
+                        const idToData = await prefetch3DTiles(quadbinIds);
 
-                        // Rewrite tileset.json URIs to blob URLs
-                        const rewrittenTileset = rewriteTilesetBlobUrls(tilesetJson, idToBlobUrl);
+                        // Get the ECEF position from the tileset root transform
+                        const rootTransform = tilesetJson.root?.transform;
+                        let modelLng = 0, modelLat = 0;
+                        if (rootTransform && rootTransform.length >= 15) {
+                            // Column-major 4x4: translation is at indices 12, 13, 14
+                            const ecefX = rootTransform[12];
+                            const ecefY = rootTransform[13];
+                            const ecefZ = rootTransform[14];
+                            // ECEF to WGS84
+                            const a = 6378137.0;
+                            const e2 = 0.00669437999014;
+                            modelLng = Math.atan2(ecefY, ecefX) * 180 / Math.PI;
+                            const p = Math.sqrt(ecefX * ecefX + ecefY * ecefY);
+                            let lat = Math.atan2(ecefZ, p * (1 - e2));
+                            for (let i = 0; i < 5; i++) {
+                                const N = a / Math.sqrt(1 - e2 * Math.sin(lat) * Math.sin(lat));
+                                lat = Math.atan2(ecefZ + e2 * N * Math.sin(lat), p);
+                            }
+                            modelLat = lat * 180 / Math.PI;
+                        }
 
-                        // Create blob URL for the rewritten tileset.json
-                        const tilesetBlob = new Blob(
-                            [JSON.stringify(rewrittenTileset)],
-                            { type: 'application/json' }
-                        );
-                        const tilesetBlobUrl = URL.createObjectURL(tilesetBlob);
-                        trackObjectURL(tilesetBlobUrl);
+                        // Extract GLB from each b3dm tile and create ScenegraphLayer
+                        const scenegraphData = [];
+                        for (const [quadbinId, tileData] of idToData) {
+                            let glbData = null;
 
-                        layers.push(new globalThis.deck.Tile3DLayer({
-                            id: 'tilequet-3d',
-                            data: tilesetBlobUrl,
-                            opacity: 1,
-                            pointSize: 2,
-                        }));
+                            // Try b3dm extraction
+                            if (tileData[0] === 0x62 && tileData[1] === 0x33 &&
+                                tileData[2] === 0x64 && tileData[3] === 0x6d) {
+                                glbData = extractGLBFromB3dm(tileData);
+                            }
+                            // Try direct GLB
+                            if (!glbData && isGLB(tileData)) {
+                                glbData = tileData;
+                            }
 
-                        // Enable 3D perspective
+                            if (glbData) {
+                                const blob = new Blob([glbData], { type: 'model/gltf-binary' });
+                                const url = URL.createObjectURL(blob);
+                                trackObjectURL(url);
+                                scenegraphData.push({
+                                    position: [modelLng, modelLat, 0],
+                                    scenegraph: url,
+                                    quadbinId,
+                                    size: glbData.length,
+                                });
+                            }
+                        }
+
+                        // Render each GLB model as a ScenegraphLayer
+                        if (scenegraphData.length > 0 && globalThis.deck.ScenegraphLayer) {
+                            // Use the highest-detail model (largest file)
+                            const bestModel = scenegraphData.reduce((a, b) =>
+                                a.size > b.size ? a : b);
+
+                            layers.push(new globalThis.deck.ScenegraphLayer({
+                                id: 'tilequet-3d-model',
+                                data: [{ position: bestModel.position }],
+                                scenegraph: bestModel.scenegraph,
+                                getPosition: d => d.position,
+                                getOrientation: [0, 0, 90],
+                                sizeScale: 1,
+                                _lighting: 'pbr',
+                            }));
+                        } else {
+                            console.warn('No GLB models extracted or ScenegraphLayer not available');
+                        }
+
+                        // Enable 3D perspective and center on model
+                        initialView.longitude = modelLng;
+                        initialView.latitude = modelLat;
+                        initialView.zoom = 19;
                         initialView.pitch = 45;
                         initialView.bearing = 0;
 
-                        tilesRendered = idToBlobUrl.size;
+                        tilesRendered = idToData.size;
                         updateStats();
 
                         setStatus(
                             `${name}\n` +
                             `Type: 3D (${tileFormat})\n` +
-                            `Tiles loaded: ${idToBlobUrl.size}/${quadbinIds.size}\n` +
-                            `Zoom: ${minZoom}-${maxZoom}\n` +
-                            `Row Groups: ${rowGroupIndex.length}`,
+                            `Tiles loaded: ${idToData.size}/${quadbinIds.size}\n` +
+                            `Models: ${scenegraphData.length}\n` +
+                            `Zoom: ${minZoom}-${maxZoom}`,
                             'success'
                         );
                     }
@@ -1334,7 +1350,11 @@
 
                 deckInstance = new globalThis.deck.DeckGL({
                     container: 'map',
-                    initialViewState: { ...initialView, pitch: 0, bearing: 0 },
+                    initialViewState: {
+                        ...initialView,
+                        pitch: initialView.pitch || 0,
+                        bearing: initialView.bearing || 0,
+                    },
                     controller: true,
                     onViewStateChange: ({ viewState }) => viewState,
                     getTooltip: tileType === 'vector' ? ({ object }) => {

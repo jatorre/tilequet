@@ -22,7 +22,7 @@ from urllib.parse import urljoin
 
 import quadbin
 
-from .metadata import create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, write_tilequet
 
 logger = logging.getLogger(__name__)
 
@@ -119,6 +119,56 @@ def _estimate_zoom_from_bounds(bounds: list[float]) -> int:
     return max(0, min(22, zoom))
 
 
+def _geometric_error_to_zoom(geometric_error: float) -> int:
+    """Estimate zoom level from 3D Tiles geometric error (meters).
+
+    Higher geometric error = coarser detail = lower zoom level.
+    At zoom 0, a tile covers ~40,000 km; at zoom 20, ~38 m.
+    """
+    if geometric_error <= 0:
+        return 20
+    zoom = int(math.log2(40_000_000 / geometric_error))
+    return max(0, min(22, zoom))
+
+
+def _ecef_to_wgs84(x: float, y: float, z: float) -> tuple[float, float]:
+    """Convert ECEF (Earth-Centered, Earth-Fixed) coordinates to WGS84 (lon, lat) degrees."""
+    # WGS84 ellipsoid constants
+    a = 6378137.0  # semi-major axis (meters)
+    e2 = 0.00669437999014  # first eccentricity squared
+
+    lon = math.atan2(y, x)
+    p = math.sqrt(x * x + y * y)
+    lat = math.atan2(z, p * (1 - e2))
+
+    # Iterative refinement (converges in 2-3 iterations)
+    for _ in range(5):
+        N = a / math.sqrt(1 - e2 * math.sin(lat) ** 2)
+        lat = math.atan2(z + e2 * N * math.sin(lat), p)
+
+    return math.degrees(lon), math.degrees(lat)
+
+
+def _multiply_transforms(a: list[float], b: list[float]) -> list[float]:
+    """Multiply two 4x4 column-major matrices: result = a * b."""
+    result = [0.0] * 16
+    for row in range(4):
+        for col in range(4):
+            val = 0.0
+            for k in range(4):
+                val += a[row + k * 4] * b[k + col * 4]
+            result[row + col * 4] = val
+    return result
+
+
+def _transform_point(transform: list[float], point: list[float]) -> list[float]:
+    """Transform a 3D point using a 4x4 column-major matrix."""
+    x = transform[0] * point[0] + transform[4] * point[1] + transform[8] * point[2] + transform[12]
+    y = transform[1] * point[0] + transform[5] * point[1] + transform[9] * point[2] + transform[13]
+    z = transform[2] * point[0] + transform[6] * point[1] + transform[10] * point[2] + transform[14]
+    return [x, y, z]
+
+
 def _fetch_tileset(url: str, client) -> dict:
     """Fetch and parse a tileset.json."""
 
@@ -133,12 +183,25 @@ def _collect_tile_refs(
     *,
     max_depth: int = 50,
 ) -> list[dict]:
-    """Recursively collect all tile content references from a tileset."""
+    """Recursively collect all tile content references from a tileset.
+
+    Propagates 3D Tiles transform matrices down the tree and converts
+    box/sphere bounding volumes from local coordinates to WGS84 bounds
+    using ECEF→WGS84 conversion.
+    """
+    identity = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
     refs = []
 
-    def _process_tile(tile: dict, depth: int = 0):
+    def _process_tile(tile: dict, parent_transform: list[float], depth: int = 0):
         if depth > max_depth:
             return
+
+        # Accumulate transform: current = parent * local
+        local_transform = tile.get("transform")
+        if local_transform:
+            current_transform = _multiply_transforms(parent_transform, local_transform)
+        else:
+            current_transform = parent_transform
 
         content = tile.get("content", {})
         content_uri = content.get("uri") or content.get("url")
@@ -153,10 +216,29 @@ def _collect_tile_refs(
                 bounds = _region_to_bounds(bv["region"])
             elif "box" in bv:
                 box = bv["box"]
-                cx, cy = box[0], box[1]
-                half_x = abs(box[3])
-                half_y = abs(box[7])
-                bounds = [cx - half_x, cy - half_y, cx + half_x, cy + half_y]
+                # Box: [cx, cy, cz, xx, xy, xz, yx, yy, yz, zx, zy, zz]
+                local_center = [box[0], box[1], box[2]]
+                ecef = _transform_point(current_transform, local_center)
+                lon, lat = _ecef_to_wgs84(ecef[0], ecef[1], ecef[2])
+                # Approximate extent from half-axis magnitudes (meters → degrees)
+                half_x = math.sqrt(box[3] ** 2 + box[4] ** 2 + box[5] ** 2)
+                half_y = math.sqrt(box[6] ** 2 + box[7] ** 2 + box[8] ** 2)
+                extent_m = max(half_x, half_y)
+                extent_deg = extent_m / 111320.0
+                bounds = [
+                    lon - extent_deg, lat - extent_deg,
+                    lon + extent_deg, lat + extent_deg,
+                ]
+            elif "sphere" in bv:
+                sphere = bv["sphere"]
+                local_center = [sphere[0], sphere[1], sphere[2]]
+                ecef = _transform_point(current_transform, local_center)
+                lon, lat = _ecef_to_wgs84(ecef[0], ecef[1], ecef[2])
+                radius_deg = sphere[3] / 111320.0
+                bounds = [
+                    lon - radius_deg, lat - radius_deg,
+                    lon + radius_deg, lat + radius_deg,
+                ]
 
             refs.append({
                 "url": full_url,
@@ -166,10 +248,10 @@ def _collect_tile_refs(
             })
 
         for child in tile.get("children", []):
-            _process_tile(child, depth + 1)
+            _process_tile(child, current_transform, depth + 1)
 
     root = tileset.get("root", tileset)
-    _process_tile(root)
+    _process_tile(root, identity)
 
     return refs
 
@@ -251,6 +333,7 @@ def convert(
         # Fetch tile content and build URI → QUADBIN mapping
         tiles = []
         uri_to_quadbin: dict[str, int] = {}
+        used_cells: set[int] = set()
         tile_format = None
         all_bounds = []
         min_zoom = 99
@@ -278,16 +361,30 @@ def convert(
             # Calculate QUADBIN cell from bounds
             bounds = ref.get("bounds")
             if bounds:
-                zoom = _estimate_zoom_from_bounds(bounds)
+                geo_error = ref.get("geometric_error", 0)
+                if geo_error > 0:
+                    zoom = _geometric_error_to_zoom(geo_error)
+                else:
+                    zoom = _estimate_zoom_from_bounds(bounds)
                 cell = _bounds_to_quadbin(bounds, zoom)
+
+                # Resolve collisions by trying lower zoom levels
+                while cell in used_cells and zoom > 0:
+                    zoom -= 1
+                    cell = _bounds_to_quadbin(bounds, zoom)
+
                 all_bounds.append(bounds)
                 min_zoom = min(min_zoom, zoom)
                 max_zoom = max(max_zoom, zoom)
             else:
                 cell = quadbin.tile_to_cell((0, 0, 0))
+                while cell in used_cells:
+                    # Shift to a different cell
+                    cell = quadbin.tile_to_cell((1, 0, 0))
                 min_zoom = 0
                 max_zoom = max(max_zoom, 0)
 
+            used_cells.add(cell)
             tiles.append({"tile": cell, "data": data})
 
             # Map original URI → QUADBIN cell for tileset.json rewriting
@@ -322,20 +419,30 @@ def convert(
     # Rewrite tileset.json URIs to QUADBIN cell IDs
     rewritten_tileset = _rewrite_tileset_uris(tileset, uri_to_quadbin)
 
+    center = [
+        (overall_bounds[0] + overall_bounds[2]) / 2,
+        (overall_bounds[1] + overall_bounds[3]) / 2,
+        min_zoom,
+    ]
+
+    tilejson = build_tilejson(
+        bounds=overall_bounds,
+        center=center,
+        min_zoom=min_zoom,
+        max_zoom=max_zoom,
+    )
+
     metadata = create_metadata(
         tile_type="3d",
         tile_format=tile_format,
         bounds=overall_bounds,
-        center=[
-            (overall_bounds[0] + overall_bounds[2]) / 2,
-            (overall_bounds[1] + overall_bounds[3]) / 2,
-            min_zoom,
-        ],
+        center=center,
         min_zoom=min_zoom,
         max_zoom=max_zoom,
         num_tiles=len(tiles),
         source_format="3dtiles",
         tileset_json=rewritten_tileset,
+        tilejson=tilejson,
     )
 
     write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
