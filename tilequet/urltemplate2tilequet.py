@@ -104,7 +104,7 @@ def _tiles_for_bbox(
     tiles = []
     for x in range(x_min, x_max + 1):
         for y in range(y_min, y_max + 1):
-            tiles.append((z, x, y))
+            tiles.append((zoom, x, y))
 
     return tiles
 

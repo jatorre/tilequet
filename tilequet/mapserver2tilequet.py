@@ -17,7 +17,7 @@ from typing import Any
 import quadbin
 
 from .metadata import create_metadata, write_tilequet
-from .mbtiles2tilequet import detect_tile_format, tile_type_from_format
+from .mbtiles2tilequet import tile_type_from_format
 
 logger = logging.getLogger(__name__)
 

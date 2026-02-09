@@ -7,9 +7,7 @@ to a TileQuet Parquet file.
 Requires the `pmtiles` package: pip install pmtiles
 """
 
-import json
 import logging
-from pathlib import Path
 
 import quadbin
 

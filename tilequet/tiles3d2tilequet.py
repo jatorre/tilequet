@@ -12,10 +12,8 @@ Requires the `httpx` package: pip install httpx
 
 from __future__ import annotations
 
-import json
 import logging
 import math
-import time
 from typing import Any
 from urllib.parse import urljoin
 
@@ -120,7 +118,6 @@ def _estimate_zoom_from_bounds(bounds: list[float]) -> int:
 
 def _fetch_tileset(url: str, client) -> dict:
     """Fetch and parse a tileset.json."""
-    import httpx
 
     response = client.get(url)
     response.raise_for_status()

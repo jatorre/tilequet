@@ -1,6 +1,5 @@
 """Tests for TileQuet validation module."""
 
-import json
 
 import pyarrow as pa
 import pyarrow.parquet as pq

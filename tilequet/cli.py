@@ -12,7 +12,6 @@ from pathlib import Path
 import click
 import pyarrow.parquet as pq
 
-from . import __version__
 from . import mbtiles2tilequet, pmtiles2tilequet, validate as validate_module
 
 
@@ -644,7 +643,7 @@ def split_zoom_command(input_file: Path, output_dir: Path, row_group_size: int, 
 
         total_size = sum(f.stat().st_size for f in files_written) / (1024 * 1024)
         orig_size = input_file.stat().st_size / (1024 * 1024)
-        click.echo(f"\nSplit complete:")
+        click.echo("\nSplit complete:")
         click.echo(f"  Original: {orig_size:.1f} MB")
         click.echo(f"  Split total: {total_size:.1f} MB")
         click.echo(f"  Files: {len(files_written)}")

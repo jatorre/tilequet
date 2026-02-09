@@ -1,6 +1,5 @@
 """Tests for TileQuet metadata utilities."""
 
-import json
 
 from tilequet.metadata import create_metadata, read_metadata, write_tilequet
 

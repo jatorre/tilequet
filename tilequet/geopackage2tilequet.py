@@ -97,8 +97,6 @@ def convert(
         gpkg_name = contents[0] if contents else table_name
         gpkg_desc = contents[1] if contents else None
         bounds = [contents[2], contents[3], contents[4], contents[5]] if contents else None
-        srs_id = contents[6] if contents else 4326
-
         # Count tiles and get zoom range
         cursor = conn.execute(
             f"SELECT MIN(zoom_level), MAX(zoom_level), COUNT(*) FROM \"{table_name}\""
