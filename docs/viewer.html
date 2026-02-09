@@ -283,17 +283,42 @@
         // ==========================================
         async function createTrackedAsyncBuffer(url) {
             const { asyncBufferFromUrl } = await loadHyparquet();
-            const baseBuffer = await asyncBufferFromUrl({ url });
-            const originalSlice = baseBuffer.slice.bind(baseBuffer);
 
-            baseBuffer.slice = async function(start, end) {
-                httpRequests++;
-                bytesTransferred += end - start;
+            // Test if the server truly supports range requests (206 response)
+            const rangeTest = await fetch(url, {
+                headers: { 'Range': 'bytes=0-3' }
+            });
+
+            if (rangeTest.status === 206) {
+                // Range requests work — use hyparquet's URL-based async buffer
+                const baseBuffer = await asyncBufferFromUrl({ url });
+                const originalSlice = baseBuffer.slice.bind(baseBuffer);
+
+                baseBuffer.slice = async function(start, end) {
+                    httpRequests++;
+                    bytesTransferred += end - start;
+                    updateStats();
+                    return await originalSlice(start, end);
+                };
+
+                return baseBuffer;
+            } else {
+                // Range requests NOT supported (e.g. GitHub Pages returns 200
+                // for every Range request). Download the full file into memory.
+                setStatus('Downloading full file (host lacks range support)...', 'loading');
+                const response = await fetch(url);
+                const arrayBuffer = await response.arrayBuffer();
+                bytesTransferred += arrayBuffer.byteLength;
+                httpRequests = 1;
                 updateStats();
-                return await originalSlice(start, end);
-            };
 
-            return baseBuffer;
+                return {
+                    byteLength: arrayBuffer.byteLength,
+                    slice: async function(start, end) {
+                        return arrayBuffer.slice(start, end);
+                    }
+                };
+            }
         }
 
         // ==========================================
