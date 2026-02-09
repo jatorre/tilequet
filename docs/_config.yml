@@ -1,7 +1,7 @@
 title: TileQuet
 description: An open source specification for storing map tile sets in Parquet format with QUADBIN spatial indexing
 url: https://jatorre.github.io/tilequet
-baseurl: ""
+baseurl: "/tilequet"
 
 # Versions (auto-updated by CI)
 cli_version: "0.1.0"
