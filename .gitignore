@@ -39,3 +39,4 @@ uv.lock
 
 # Example data (large binary files)
 examples/
+!docs/examples/

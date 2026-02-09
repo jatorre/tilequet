@@ -92,7 +92,7 @@
             <label>Sample Files</label>
             <select id="sampleSelect" onchange="selectSample()">
                 <option value="">-- Select a sample --</option>
-                <option value="https://github.com/jatorre/tilequet/releases/download/v0.1.0-samples/firenze.parquet">Firenze (vector, PBF)</option>
+                <option value="https://jatorre.github.io/tilequet/examples/firenze.parquet">Firenze (vector, PBF)</option>
             </select>
 
             <label>Or enter TileQuet file URL</label>
@@ -689,6 +689,191 @@
             };
         }
 
+        // ==========================================
+        // 3D Tiles parsing (b3dm, GLB, pnts)
+        // ==========================================
+
+        // Extract GLB from b3dm container
+        // b3dm format: 28-byte header + featureTable + batchTable + glTF body
+        function extractGLBFromB3dm(buffer) {
+            if (buffer.length < 28) return null;
+            const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+
+            // Check magic "b3dm"
+            const magic = String.fromCharCode(buffer[0], buffer[1], buffer[2], buffer[3]);
+            if (magic !== 'b3dm') return null;
+
+            const featureTableJSONLen = view.getUint32(12, true);
+            const featureTableBinLen = view.getUint32(16, true);
+            const batchTableJSONLen = view.getUint32(20, true);
+            const batchTableBinLen = view.getUint32(24, true);
+
+            const glbOffset = 28 + featureTableJSONLen + featureTableBinLen + batchTableJSONLen + batchTableBinLen;
+            if (glbOffset >= buffer.length) return null;
+
+            return buffer.slice(glbOffset);
+        }
+
+        // Check if buffer is GLB (glTF binary)
+        function isGLB(buffer) {
+            if (buffer.length < 4) return false;
+            // GLB magic: 0x46546C67 ("glTF" in little-endian)
+            return buffer[0] === 0x67 && buffer[1] === 0x6C && buffer[2] === 0x54 && buffer[3] === 0x46;
+        }
+
+        // Extract point positions from pnts (point cloud) tile
+        function parsePntsPositions(buffer) {
+            if (buffer.length < 28) return null;
+            const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+
+            const magic = String.fromCharCode(buffer[0], buffer[1], buffer[2], buffer[3]);
+            if (magic !== 'pnts') return null;
+
+            const featureTableJSONLen = view.getUint32(12, true);
+            const featureTableBinLen = view.getUint32(16, true);
+
+            // Parse feature table JSON for POINTS_LENGTH and POSITION offset
+            const ftJSON = JSON.parse(new TextDecoder().decode(buffer.slice(28, 28 + featureTableJSONLen)));
+            const pointsLength = ftJSON.POINTS_LENGTH || 0;
+            if (pointsLength === 0) return null;
+
+            const ftBinStart = 28 + featureTableJSONLen;
+            const posOffset = ftJSON.POSITION?.byteOffset || 0;
+
+            // Read positions as Float32 triplets
+            const positions = [];
+            const posStart = ftBinStart + posOffset;
+            for (let i = 0; i < pointsLength && posStart + i * 12 + 12 <= buffer.length; i++) {
+                const px = view.getFloat32(posStart + i * 12, true);
+                const py = view.getFloat32(posStart + i * 12 + 4, true);
+                const pz = view.getFloat32(posStart + i * 12 + 8, true);
+                positions.push([px, py, pz]);
+            }
+
+            // Check for RGB colors
+            let colors = null;
+            if (ftJSON.RGB) {
+                const rgbOffset = ftJSON.RGB.byteOffset || 0;
+                const rgbStart = ftBinStart + rgbOffset;
+                colors = [];
+                for (let i = 0; i < pointsLength && rgbStart + i * 3 + 3 <= buffer.length; i++) {
+                    colors.push([buffer[rgbStart + i * 3], buffer[rgbStart + i * 3 + 1], buffer[rgbStart + i * 3 + 2]]);
+                }
+            }
+
+            return { positions, colors, pointsLength };
+        }
+
+        // Render a 3D tile — returns { type, data } for the sublayer to consume
+        async function render3DTile(tileData, tileFormat) {
+            // Try b3dm first
+            if (tileData[0] === 0x62 && tileData[1] === 0x33 && tileData[2] === 0x64 && tileData[3] === 0x6d) {
+                const glb = extractGLBFromB3dm(tileData);
+                if (glb) {
+                    const url = URL.createObjectURL(new Blob([glb], { type: 'model/gltf-binary' }));
+                    return { type: 'glb', url };
+                }
+            }
+
+            // Try GLB directly
+            if (isGLB(tileData)) {
+                const url = URL.createObjectURL(new Blob([tileData], { type: 'model/gltf-binary' }));
+                return { type: 'glb', url };
+            }
+
+            // Try pnts
+            if (tileData[0] === 0x70 && tileData[1] === 0x6e && tileData[2] === 0x74 && tileData[3] === 0x73) {
+                const result = parsePntsPositions(tileData);
+                if (result) return { type: 'pnts', ...result };
+            }
+
+            return null;
+        }
+
+        // Object URL cleanup tracker
+        let activeObjectURLs = [];
+        function trackObjectURL(url) {
+            activeObjectURLs.push(url);
+            // Clean up old URLs to prevent memory leaks (keep last 500)
+            if (activeObjectURLs.length > 500) {
+                const old = activeObjectURLs.splice(0, activeObjectURLs.length - 500);
+                old.forEach(u => URL.revokeObjectURL(u));
+            }
+        }
+
+        // ==========================================
+        // 3D Tiles tileset.json handling
+        // Pre-fetch tiles from Parquet, create blob URLs,
+        // rewrite tileset.json URIs, feed to Tile3DLayer
+        // ==========================================
+
+        // Collect all QUADBIN cell IDs from rewritten tileset.json
+        function collectQuadbinIdsFromTileset(tilesetJson) {
+            const ids = new Set();
+            function walk(node) {
+                const content = node.content || {};
+                const uri = content.uri || content.url;
+                // QUADBIN IDs are large numeric strings (>10 digits)
+                if (uri && /^\d{10,}$/.test(uri)) {
+                    ids.add(uri);
+                }
+                for (const child of (node.children || [])) {
+                    walk(child);
+                }
+            }
+            const root = tilesetJson.root || tilesetJson;
+            walk(root);
+            return ids;
+        }
+
+        // Pre-fetch all 3D tile data from Parquet → Map<quadbinIdStr, blobUrl>
+        async function prefetch3DTiles(quadbinIdStrs) {
+            const idToBlobUrl = new Map();
+            const bigIntIds = [...quadbinIdStrs].map(id => BigInt(id));
+
+            const results = await fetchTilesBatch(bigIntIds);
+
+            for (const [tileIdStr, data] of results) {
+                if (!data) continue;
+
+                // Detect MIME type from magic bytes
+                let mimeType = 'application/octet-stream';
+                if (data.length >= 4) {
+                    const magic = String.fromCharCode(data[0], data[1], data[2], data[3]);
+                    if (magic === 'glTF') mimeType = 'model/gltf-binary';
+                }
+
+                const blob = new Blob([data], { type: mimeType });
+                const url = URL.createObjectURL(blob);
+                idToBlobUrl.set(tileIdStr, url);
+                trackObjectURL(url);
+
+                tilesLoaded++;
+                bytesTransferred += data.length;
+            }
+
+            return idToBlobUrl;
+        }
+
+        // Rewrite tileset.json URIs from QUADBIN cell IDs to blob URLs
+        function rewriteTilesetBlobUrls(tilesetJson, idToBlobUrl) {
+            const rewritten = JSON.parse(JSON.stringify(tilesetJson));
+            function walk(node) {
+                const content = node.content || {};
+                const uri = content.uri || content.url;
+                if (uri && idToBlobUrl.has(uri)) {
+                    content.uri = idToBlobUrl.get(uri);
+                    delete content.url;
+                }
+                for (const child of (node.children || [])) {
+                    walk(child);
+                }
+            }
+            const root = rewritten.root || rewritten;
+            walk(root);
+            return rewritten;
+        }
+
         // Simple gzip decompression using DecompressionStream API
         async function decompressGzipAsync(buffer) {
             const ds = new DecompressionStream('gzip');
@@ -1064,32 +1249,61 @@
                         }
                     }));
                 } else if (tileType === '3d') {
-                    // 3D tiles — basic display using raster approach for b3dm/pnts
-                    // Full 3D Tiles support would need a tileset.json tree
-                    setStatus(
-                        statusEl.textContent + '\n\nNote: 3D tile preview is experimental.',
-                        'success'
-                    );
-                    layers.push(new globalThis.deck.TileLayer({
-                        id: 'tilequet-3d',
-                        getTileData,
-                        minZoom,
-                        maxZoom,
-                        tileSize: 256,
-                        extent: dataBounds,
-                        refinementStrategy: 'no-overlap',
-                        maxRequests: 6,
-                        renderSubLayers: props => {
-                            const { tile, data } = props;
-                            if (!data) return null;
-                            const { west, south, east, north } = tile.bbox;
-                            return new globalThis.deck.BitmapLayer({
-                                id: `${props.id}-${tile.index.x}-${tile.index.y}-${tile.index.z}`,
-                                image: data,
-                                bounds: [west, south, east, north]
-                            });
-                        }
-                    }));
+                    // 3D Tiles: read tileset_json from metadata, pre-fetch tiles
+                    // from Parquet, rewrite URIs to blob URLs, feed to Tile3DLayer
+                    const tilesetJson = tiquetMetadata?.tileset_json;
+                    if (!tilesetJson) {
+                        setStatus(
+                            statusEl.textContent + '\n\nNo tileset_json in metadata.\n3D tiles require the tileset.json tree.',
+                            'error'
+                        );
+                    } else if (!globalThis.deck.Tile3DLayer) {
+                        setStatus(
+                            statusEl.textContent + '\n\nTile3DLayer not available in this deck.gl build.',
+                            'error'
+                        );
+                    } else {
+                        // Collect QUADBIN cell IDs from the rewritten tileset.json
+                        const quadbinIds = collectQuadbinIdsFromTileset(tilesetJson);
+                        setStatus(`Fetching ${quadbinIds.size} 3D tiles from Parquet...`, 'loading');
+
+                        // Pre-fetch all tiles and create blob URLs
+                        const idToBlobUrl = await prefetch3DTiles(quadbinIds);
+
+                        // Rewrite tileset.json URIs to blob URLs
+                        const rewrittenTileset = rewriteTilesetBlobUrls(tilesetJson, idToBlobUrl);
+
+                        // Create blob URL for the rewritten tileset.json
+                        const tilesetBlob = new Blob(
+                            [JSON.stringify(rewrittenTileset)],
+                            { type: 'application/json' }
+                        );
+                        const tilesetBlobUrl = URL.createObjectURL(tilesetBlob);
+                        trackObjectURL(tilesetBlobUrl);
+
+                        layers.push(new globalThis.deck.Tile3DLayer({
+                            id: 'tilequet-3d',
+                            data: tilesetBlobUrl,
+                            opacity: 1,
+                            pointSize: 2,
+                        }));
+
+                        // Enable 3D perspective
+                        initialView.pitch = 45;
+                        initialView.bearing = 0;
+
+                        tilesRendered = idToBlobUrl.size;
+                        updateStats();
+
+                        setStatus(
+                            `${name}\n` +
+                            `Type: 3D (${tileFormat})\n` +
+                            `Tiles loaded: ${idToBlobUrl.size}/${quadbinIds.size}\n` +
+                            `Zoom: ${minZoom}-${maxZoom}\n` +
+                            `Row Groups: ${rowGroupIndex.length}`,
+                            'success'
+                        );
+                    }
                 } else {
                     // Raster tile layer (default)
                     layers.push(new globalThis.deck.TileLayer({

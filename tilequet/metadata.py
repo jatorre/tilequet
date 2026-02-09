@@ -41,6 +41,7 @@ def create_metadata(
     attribution: str | None = None,
     layers: list[dict] | None = None,
     source_format: str | None = None,
+    **extra: Any,
 ) -> dict[str, Any]:
     """Create a TileQuet metadata dictionary.
 
@@ -91,6 +92,9 @@ def create_metadata(
         "created_by": f"tilequet-io {__version__}",
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+
+    # Merge any extra fields (e.g., tileset_json for 3D Tiles)
+    metadata.update(extra)
 
     return metadata
 

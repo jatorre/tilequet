@@ -5,13 +5,16 @@ Reads a 3D Tiles tileset (tileset.json) and converts the tile content
 
 The 3D Tiles specification uses a hierarchical spatial structure.
 This converter flattens tiles into QUADBIN-indexed rows based on
-the geographic bounds of each tile.
+the geographic bounds of each tile. The original tileset.json tree
+is preserved in the row-0 metadata with content URIs rewritten to
+QUADBIN cell IDs, so viewers can reconstruct the hierarchy.
 
 Requires the `httpx` package: pip install httpx
 """
 
 from __future__ import annotations
 
+import copy
 import logging
 import math
 from typing import Any
@@ -124,16 +127,14 @@ def _fetch_tileset(url: str, client) -> dict:
     return response.json()
 
 
-def _collect_tiles(
+def _collect_tile_refs(
     tileset: dict,
     base_url: str,
-    client,
     *,
     max_depth: int = 50,
-    verbose: bool = False,
 ) -> list[dict]:
-    """Recursively collect all tiles from a tileset."""
-    tiles = []
+    """Recursively collect all tile content references from a tileset."""
+    refs = []
 
     def _process_tile(tile: dict, depth: int = 0):
         if depth > max_depth:
@@ -143,38 +144,61 @@ def _collect_tiles(
         content_uri = content.get("uri") or content.get("url")
 
         if content_uri:
-            # Resolve relative URL
             full_url = urljoin(base_url, content_uri)
 
-            # Determine bounds from bounding volume
             bounds = None
             bv = tile.get("boundingVolume", {})
 
             if "region" in bv:
                 bounds = _region_to_bounds(bv["region"])
             elif "box" in bv:
-                # box: [cx, cy, cz, xx, xy, xz, yx, yy, yz, zx, zy, zz]
-                # Approximate bounds from center
                 box = bv["box"]
                 cx, cy = box[0], box[1]
                 half_x = abs(box[3])
                 half_y = abs(box[7])
                 bounds = [cx - half_x, cy - half_y, cx + half_x, cy + half_y]
 
-            tiles.append({
+            refs.append({
                 "url": full_url,
+                "original_uri": content_uri,
                 "bounds": bounds,
                 "geometric_error": tile.get("geometricError", 0),
             })
 
-        # Process children
         for child in tile.get("children", []):
             _process_tile(child, depth + 1)
 
     root = tileset.get("root", tileset)
     _process_tile(root)
 
-    return tiles
+    return refs
+
+
+def _rewrite_tileset_uris(tileset: dict, uri_to_quadbin: dict[str, int]) -> dict:
+    """Deep-copy tileset.json and rewrite content URIs to QUADBIN cell IDs.
+
+    This preserves the tree structure while replacing file paths with
+    QUADBIN identifiers so the viewer can map tiles back to Parquet rows.
+    """
+    rewritten = copy.deepcopy(tileset)
+
+    def _rewrite_node(node: dict):
+        content = node.get("content", {})
+        content_uri = content.get("uri") or content.get("url")
+
+        if content_uri and content_uri in uri_to_quadbin:
+            cell_id = uri_to_quadbin[content_uri]
+            # Use "uri" key (3D Tiles 1.0+)
+            content["uri"] = str(cell_id)
+            content.pop("url", None)
+
+        for child in node.get("children", []):
+            _rewrite_node(child)
+
+    root = rewritten.get("root", rewritten)
+    _rewrite_node(root)
+
+    return rewritten
 
 
 def convert(
@@ -186,6 +210,11 @@ def convert(
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert a 3D Tiles tileset to TileQuet format.
+
+    The original tileset.json tree is stored in the row-0 metadata
+    with content URIs rewritten to QUADBIN cell IDs. This allows
+    viewers to reconstruct the 3D Tiles hierarchy while fetching
+    tile data from the Parquet file.
 
     Args:
         tileset_url: URL to tileset.json.
@@ -212,15 +241,16 @@ def convert(
         base_url = tileset_url.rsplit("/", 1)[0] + "/"
 
         # Collect all tile references
-        tile_refs = _collect_tiles(tileset, base_url, client, verbose=verbose)
+        tile_refs = _collect_tile_refs(tileset, base_url)
         if verbose:
             logger.info("Found %d tile content references", len(tile_refs))
 
         if max_tiles:
             tile_refs = tile_refs[:max_tiles]
 
-        # Fetch tile content
+        # Fetch tile content and build URI → QUADBIN mapping
         tiles = []
+        uri_to_quadbin: dict[str, int] = {}
         tile_format = None
         all_bounds = []
         min_zoom = 99
@@ -260,6 +290,9 @@ def convert(
 
             tiles.append({"tile": cell, "data": data})
 
+            # Map original URI → QUADBIN cell for tileset.json rewriting
+            uri_to_quadbin[ref["original_uri"]] = cell
+
             if verbose and (i + 1) % 50 == 0:
                 logger.info("Fetched %d/%d tiles...", i + 1, len(tile_refs))
 
@@ -286,6 +319,9 @@ def convert(
     if verbose:
         logger.info("Fetched %d 3D tiles", len(tiles))
 
+    # Rewrite tileset.json URIs to QUADBIN cell IDs
+    rewritten_tileset = _rewrite_tileset_uris(tileset, uri_to_quadbin)
+
     metadata = create_metadata(
         tile_type="3d",
         tile_format=tile_format,
@@ -299,6 +335,7 @@ def convert(
         max_zoom=max_zoom,
         num_tiles=len(tiles),
         source_format="3dtiles",
+        tileset_json=rewritten_tileset,
     )
 
     write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
