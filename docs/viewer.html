@@ -1336,17 +1336,7 @@
                     container: 'map',
                     initialViewState: { ...initialView, pitch: 0, bearing: 0 },
                     controller: true,
-                    onViewStateChange: ({ viewState, interactionState }) => {
-                        if (interactionState?.isPanning || interactionState?.isZooming) {
-                            if (batchTimeout) {
-                                clearTimeout(batchTimeout);
-                                batchTimeout = null;
-                            }
-                            if (cancelDebounceTimeout) clearTimeout(cancelDebounceTimeout);
-                            cancelDebounceTimeout = setTimeout(cancelStaleBatches, 100);
-                        }
-                        return viewState;
-                    },
+                    onViewStateChange: ({ viewState }) => viewState,
                     getTooltip: tileType === 'vector' ? ({ object }) => {
                         if (!object || !object.properties) return null;
                         const props = { ...object.properties };
