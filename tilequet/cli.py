@@ -222,6 +222,9 @@ def convert_group():
         tilequet-io convert 3dtiles https://example.com/tileset.json output.parquet
         tilequet-io convert wms "https://wms.example.com" output.parquet -l layer1
         tilequet-io convert wmts "https://wmts.example.com" output.parquet -l layer1
+        tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet
+        tilequet-io convert ogc-tiles "https://api.example.com" output.parquet -c layer1
+        tilequet-io convert ogc-maps "https://api.example.com" output.parquet -c layer1
     """
     pass
 
@@ -626,6 +629,211 @@ def convert_wmts(service_url, output_file, layer, tile_matrix_set, min_zoom, max
             min_zoom=min_zoom, max_zoom=max_zoom,
             bbox=bbox_tuple, image_format=image_format,
             style=style,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
+
+
+@convert_group.command("tilejson")
+@click.argument("tilejson_url")
+@click.argument("output_file", type=click.Path())
+@click.option("--min-zoom", type=int, default=None, help="Override minimum zoom from TileJSON")
+@click.option("--max-zoom", type=int, default=None, help="Override maximum zoom from TileJSON")
+@click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_tilejson(tilejson_url, output_file, min_zoom, max_zoom, bbox, row_group_size, verbose):
+    """Convert a TileJSON endpoint to TileQuet format.
+
+    Fetches the TileJSON metadata, extracts tile URL templates, bounds,
+    and zoom range, then downloads all tiles.
+
+    TILEJSON_URL is the URL to a TileJSON file.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet
+        tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet --max-zoom 4
+    """
+    setup_logging(verbose)
+
+    from . import tilejson2tilequet
+
+    # Parse bbox
+    bbox_tuple = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("Must have exactly 4 values")
+            bbox_tuple = tuple(parts)
+        except ValueError as e:
+            click.echo(f"Error: Invalid bbox format. Expected west,south,east,north: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Fetching tiles from TileJSON: {tilejson_url}")
+
+    try:
+        result = tilejson2tilequet.convert(
+            tilejson_url, output_file,
+            bbox=bbox_tuple, min_zoom=min_zoom, max_zoom=max_zoom,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
+
+
+@convert_group.command("ogc-tiles")
+@click.argument("base_url")
+@click.argument("output_file", type=click.Path())
+@click.option("--collection", "-c", required=True, help="Collection identifier")
+@click.option("--tile-matrix-set", type=str, default="WebMercatorQuad", help="Tile matrix set (default: WebMercatorQuad)")
+@click.option("--min-zoom", type=int, default=0, help="Minimum zoom level (default: 0)")
+@click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
+@click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_ogc_tiles(base_url, output_file, collection, tile_matrix_set, min_zoom, max_zoom,
+                      bbox, row_group_size, verbose):
+    """Convert an OGC API - Tiles endpoint to TileQuet format.
+
+    Fetches pre-rendered tiles from the RESTful URL pattern:
+    {BASE_URL}/collections/{collection}/tiles/{tileMatrixSet}/{z}/{y}/{x}
+
+    BASE_URL is the OGC API base URL.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert ogc-tiles "https://maps.example.com" output.parquet -c buildings
+        tilequet-io convert ogc-tiles "https://api.example.com" output.parquet -c elevation --max-zoom 8
+    """
+    setup_logging(verbose)
+
+    from . import ogctiles2tilequet
+
+    # Parse bbox
+    bbox_tuple = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("Must have exactly 4 values")
+            bbox_tuple = tuple(parts)
+        except ValueError as e:
+            click.echo(f"Error: Invalid bbox format. Expected west,south,east,north: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Fetching OGC API Tiles from {base_url}")
+    click.echo(f"  Collection: {collection}")
+    click.echo(f"  TileMatrixSet: {tile_matrix_set}")
+    click.echo(f"  Zoom: {min_zoom}-{max_zoom}")
+    if bbox_tuple:
+        click.echo(f"  Bbox: {bbox_tuple}")
+
+    try:
+        result = ogctiles2tilequet.convert(
+            base_url, output_file,
+            collection=collection, tile_matrix_set=tile_matrix_set,
+            min_zoom=min_zoom, max_zoom=max_zoom,
+            bbox=bbox_tuple,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
+
+
+@convert_group.command("ogc-maps")
+@click.argument("base_url")
+@click.argument("output_file", type=click.Path())
+@click.option("--collection", "-c", required=True, help="Collection identifier")
+@click.option("--min-zoom", type=int, default=0, help="Minimum zoom level (default: 0)")
+@click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
+@click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
+@click.option("--tile-size", type=int, default=256, help="Tile size in pixels (default: 256)")
+@click.option("--format", "image_format", type=str, default="image/png", help="Image format (default: image/png)")
+@click.option("--transparent/--no-transparent", default=True, help="Request transparent background")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_ogc_maps(base_url, output_file, collection, min_zoom, max_zoom, bbox,
+                     tile_size, image_format, transparent, row_group_size, verbose):
+    """Convert an OGC API - Maps endpoint to TileQuet format.
+
+    Fetches rendered map images from:
+    {BASE_URL}/collections/{collection}/map?bbox=...&width=...&height=...
+
+    BASE_URL is the OGC API base URL.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert ogc-maps "https://maps.example.com" output.parquet -c temperature
+        tilequet-io convert ogc-maps "https://api.example.com" output.parquet -c satellite --max-zoom 8
+    """
+    setup_logging(verbose)
+
+    from . import ogcmaps2tilequet
+
+    # Parse bbox
+    bbox_tuple = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("Must have exactly 4 values")
+            bbox_tuple = tuple(parts)
+        except ValueError as e:
+            click.echo(f"Error: Invalid bbox format. Expected west,south,east,north: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Fetching OGC API Maps from {base_url}")
+    click.echo(f"  Collection: {collection}")
+    click.echo(f"  Zoom: {min_zoom}-{max_zoom}")
+    if bbox_tuple:
+        click.echo(f"  Bbox: {bbox_tuple}")
+
+    try:
+        result = ogcmaps2tilequet.convert(
+            base_url, output_file,
+            collection=collection,
+            min_zoom=min_zoom, max_zoom=max_zoom,
+            bbox=bbox_tuple, tile_size=tile_size,
+            image_format=image_format, transparent=transparent,
             row_group_size=row_group_size, verbose=verbose,
         )
     except ImportError as e:
