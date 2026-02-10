@@ -50,7 +50,7 @@ def convert(
     output_path: str,
     *,
     table_name: str | None = None,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict:
     """Convert a GeoPackage tile table to TileQuet format.

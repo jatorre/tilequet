@@ -66,7 +66,7 @@ tilequet-io convert pmtiles INPUT OUTPUT [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Example
@@ -91,7 +91,7 @@ tilequet-io convert mbtiles INPUT OUTPUT [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Example
@@ -117,7 +117,7 @@ tilequet-io convert geopackage INPUT OUTPUT [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--table` | auto | Tile table name (auto-detects first tile table) |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Example
@@ -147,7 +147,7 @@ tilequet-io convert url TEMPLATE OUTPUT [OPTIONS]
 | `--max-zoom` | `5` | Maximum zoom level |
 | `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
 | `--tms` | — | Use TMS Y convention (flipped Y axis) |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -185,7 +185,7 @@ tilequet-io convert mapserver URL OUTPUT [OPTIONS]
 | `--bbox` | service extent | Bounding box: `west,south,east,north` (WGS84) |
 | `--min-zoom` | service min | Minimum zoom level |
 | `--max-zoom` | service max (capped at 14) | Maximum zoom level |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -219,7 +219,7 @@ tilequet-io convert 3dtiles URL OUTPUT [OPTIONS]
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--max-tiles` | unlimited | Maximum number of tiles to fetch |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -258,7 +258,7 @@ tilequet-io convert wms SERVICE_URL OUTPUT [OPTIONS]
 | `--styles` | `""` | WMS styles parameter |
 | `--crs` | `EPSG:3857` | Coordinate reference system |
 | `--transparent/--no-transparent` | `true` | Request transparent background |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -296,7 +296,7 @@ tilequet-io convert wmts SERVICE_URL OUTPUT [OPTIONS]
 | `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
 | `--format` | `image/png` | Image format |
 | `--style` | `default` | WMTS style name |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -328,7 +328,7 @@ tilequet-io convert tilejson TILEJSON_URL OUTPUT [OPTIONS]
 | `--min-zoom` | from TileJSON | Override minimum zoom level |
 | `--max-zoom` | from TileJSON | Override maximum zoom level |
 | `--bbox` | from TileJSON | Bounding box: `west,south,east,north` (WGS84) |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -363,7 +363,7 @@ tilequet-io convert ogc-tiles BASE_URL OUTPUT [OPTIONS]
 | `--min-zoom` | `0` | Minimum zoom level |
 | `--max-zoom` | `5` | Maximum zoom level |
 | `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -399,7 +399,7 @@ tilequet-io convert ogc-maps BASE_URL OUTPUT [OPTIONS]
 | `--tile-size` | `256` | Tile width/height in pixels |
 | `--format` | `image/png` | Image format |
 | `--transparent/--no-transparent` | `true` | Request transparent background |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -431,7 +431,7 @@ tilequet-io convert cog INPUT OUTPUT [OPTIONS]
 | `--min-zoom` | lowest available | Minimum zoom level |
 | `--max-zoom` | native resolution | Maximum zoom level |
 | `--format` | `png` | Image encoding (`png` or `jpeg`) |
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Examples
@@ -554,7 +554,7 @@ tilequet-io split-zoom INPUT OUTPUT_DIR [OPTIONS]
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `--row-group-size` | `200` | Parquet row group size |
+| `--row-group-size` | `1` | Parquet row group size |
 | `-v, --verbose` | — | Enable verbose output |
 
 ### Example

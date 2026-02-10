@@ -63,7 +63,7 @@ def tms_to_xyz_y(zoom: int, tms_y: int) -> int:
 def convert(
     input_path: str,
     output_path: str,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict:
     """Convert an MBTiles file to TileQuet format.

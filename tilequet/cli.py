@@ -273,7 +273,7 @@ def convert_group():
 @convert_group.command("pmtiles")
 @click.argument("input_source")
 @click.argument("output_file", type=click.Path())
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_pmtiles(input_source, output_file, row_group_size, verbose):
     """Convert a PMTiles file or URL to TileQuet format.
@@ -329,7 +329,7 @@ def convert_pmtiles(input_source, output_file, row_group_size, verbose):
 @convert_group.command("mbtiles")
 @click.argument("input_file", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_mbtiles(input_file, output_file, row_group_size, verbose):
     """Convert an MBTiles file to TileQuet format.
@@ -361,7 +361,7 @@ def convert_mbtiles(input_file, output_file, row_group_size, verbose):
 @click.argument("input_file", type=click.Path(exists=True))
 @click.argument("output_file", type=click.Path())
 @click.option("--table", "table_name", type=str, default=None, help="Tile table name (auto-detect if not specified)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_geopackage(input_file, output_file, table_name, row_group_size, verbose):
     """Convert a GeoPackage tile table to TileQuet format.
@@ -402,7 +402,7 @@ def convert_geopackage(input_file, output_file, table_name, row_group_size, verb
 @click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
 @click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
 @click.option("--tms", is_flag=True, help="Use TMS Y convention (flipped Y axis)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_url(url_template, output_file, min_zoom, max_zoom, bbox, tms, row_group_size, verbose):
     """Convert tiles from a URL template to TileQuet format.
@@ -468,7 +468,7 @@ def convert_url(url_template, output_file, min_zoom, max_zoom, bbox, tms, row_gr
 @click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
 @click.option("--min-zoom", type=int, default=None, help="Minimum zoom level")
 @click.option("--max-zoom", type=int, default=None, help="Maximum zoom level")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_mapserver(url, output_file, token, bbox, min_zoom, max_zoom, row_group_size, verbose):
     """Convert an ArcGIS MapServer to TileQuet format.
@@ -524,7 +524,7 @@ def convert_mapserver(url, output_file, token, bbox, min_zoom, max_zoom, row_gro
 @click.argument("tileset_url")
 @click.argument("output_file", type=click.Path())
 @click.option("--max-tiles", type=int, default=None, help="Maximum number of tiles to fetch")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_3dtiles(tileset_url, output_file, max_tiles, row_group_size, verbose):
     """Convert an OGC 3D Tiles tileset to TileQuet format.
@@ -575,7 +575,7 @@ def convert_3dtiles(tileset_url, output_file, max_tiles, row_group_size, verbose
 @click.option("--styles", type=str, default="", help="WMS styles parameter")
 @click.option("--crs", type=str, default="EPSG:3857", help="CRS for requests (default: EPSG:3857)")
 @click.option("--transparent/--no-transparent", default=True, help="Request transparent background")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_wms(service_url, output_file, layers, min_zoom, max_zoom, bbox,
                 tile_size, image_format, wms_version, styles, crs, transparent,
@@ -648,7 +648,7 @@ def convert_wms(service_url, output_file, layers, min_zoom, max_zoom, bbox,
 @click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
 @click.option("--format", "image_format", type=str, default="image/png", help="Image format (default: image/png)")
 @click.option("--style", type=str, default="default", help="WMTS style (default: default)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_wmts(service_url, output_file, layer, tile_matrix_set, min_zoom, max_zoom,
                  bbox, image_format, style, row_group_size, verbose):
@@ -715,7 +715,7 @@ def convert_wmts(service_url, output_file, layer, tile_matrix_set, min_zoom, max
 @click.option("--min-zoom", type=int, default=None, help="Override minimum zoom from TileJSON")
 @click.option("--max-zoom", type=int, default=None, help="Override maximum zoom from TileJSON")
 @click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_tilejson(tilejson_url, output_file, min_zoom, max_zoom, bbox, row_group_size, verbose):
     """Convert a TileJSON endpoint to TileQuet format.
@@ -778,7 +778,7 @@ def convert_tilejson(tilejson_url, output_file, min_zoom, max_zoom, bbox, row_gr
 @click.option("--min-zoom", type=int, default=0, help="Minimum zoom level (default: 0)")
 @click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
 @click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_ogc_tiles(base_url, output_file, collection, tile_matrix_set, min_zoom, max_zoom,
                       bbox, row_group_size, verbose):
@@ -851,7 +851,7 @@ def convert_ogc_tiles(base_url, output_file, collection, tile_matrix_set, min_zo
 @click.option("--tile-size", type=int, default=256, help="Tile size in pixels (default: 256)")
 @click.option("--format", "image_format", type=str, default="image/png", help="Image format (default: image/png)")
 @click.option("--transparent/--no-transparent", default=True, help="Request transparent background")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_ogc_maps(base_url, output_file, collection, min_zoom, max_zoom, bbox,
                      tile_size, image_format, transparent, row_group_size, verbose):
@@ -920,7 +920,7 @@ def convert_ogc_maps(base_url, output_file, collection, min_zoom, max_zoom, bbox
 @click.option("--min-zoom", type=int, default=None, help="Minimum zoom level (default: lowest available)")
 @click.option("--max-zoom", type=int, default=None, help="Maximum zoom level (default: native resolution)")
 @click.option("--format", "image_format", type=click.Choice(["png", "jpeg"]), default="png", help="Image format (default: png)")
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def convert_cog(cog_path, output_file, min_zoom, max_zoom, image_format, row_group_size, verbose):
     """Convert a tile-aligned COG to TileQuet format.
@@ -1027,7 +1027,7 @@ def validate_command(file: Path, verbose: bool, json_output: bool):
 @cli.command("split-zoom")
 @click.argument("input_file", type=click.Path(exists=True, path_type=Path))
 @click.argument("output_dir", type=click.Path(path_type=Path))
-@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("--row-group-size", type=int, default=1, help="Rows per Parquet row group (default: 1)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
 def split_zoom_command(input_file: Path, output_dir: Path, row_group_size: int, verbose: bool):
     """Split a TileQuet file by zoom level for optimized remote access.

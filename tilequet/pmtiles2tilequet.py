@@ -47,7 +47,7 @@ def _check_pmtiles():
 def convert(
     input_path: str,
     output_path: str,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict:
     """Convert a PMTiles file to TileQuet format.

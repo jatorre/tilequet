@@ -125,7 +125,7 @@ def convert(
     styles: str = "",
     crs: str = "EPSG:3857",
     transparent: bool = True,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert a WMS service to TileQuet format.

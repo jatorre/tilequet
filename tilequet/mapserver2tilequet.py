@@ -198,7 +198,7 @@ def convert(
     bbox: tuple[float, float, float, float] | None = None,
     min_zoom: int | None = None,
     max_zoom: int | None = None,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert an ArcGIS MapServer to TileQuet format.

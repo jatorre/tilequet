@@ -104,7 +104,7 @@ def convert(
     bbox: tuple[float, float, float, float] | None = None,
     min_zoom: int = 0,
     max_zoom: int = 5,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert an OGC API - Tiles endpoint to TileQuet format.

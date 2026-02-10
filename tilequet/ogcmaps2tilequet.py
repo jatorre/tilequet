@@ -128,7 +128,7 @@ def convert(
     image_format: str = "image/png",
     transparent: bool = True,
     crs: str = "CRS84",
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert an OGC API - Maps endpoint to TileQuet format.

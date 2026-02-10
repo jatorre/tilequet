@@ -181,7 +181,7 @@ def write_tilequet(
     tiles: list[dict],
     metadata: dict,
     *,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
 ) -> None:
     """Write a TileQuet Parquet file.
 
@@ -242,7 +242,7 @@ class TileQuetWriter:
         self,
         output_path: str,
         *,
-        row_group_size: int = 200,
+        row_group_size: int = 1,
         max_memory_mb: int = 512,
     ) -> None:
         self._output_path = output_path

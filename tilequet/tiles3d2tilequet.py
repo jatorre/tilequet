@@ -288,7 +288,7 @@ def convert(
     output_path: str,
     *,
     max_tiles: int | None = None,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert a 3D Tiles tileset to TileQuet format.

@@ -118,7 +118,7 @@ def convert(
     max_zoom: int = 5,
     bbox: tuple[float, float, float, float] | None = None,
     tms: bool = False,
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert tiles from a URL template to TileQuet format.

@@ -112,7 +112,7 @@ def convert(
     max_zoom: int = 5,
     image_format: str = "image/png",
     style: str = "default",
-    row_group_size: int = 200,
+    row_group_size: int = 1,
     verbose: bool = False,
 ) -> dict[str, Any]:
     """Convert a WMTS service to TileQuet format.
