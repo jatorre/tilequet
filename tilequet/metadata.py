@@ -206,10 +206,15 @@ def write_tilequet(
         schema=TILEQUET_SCHEMA,
     )
 
+    # Add file-level Parquet key-value metadata for fast identification
+    existing_meta = table.schema.metadata or {}
+    existing_meta[b"tilequet:version"] = TILEQUET_VERSION.encode()
+    table = table.replace_schema_metadata(existing_meta)
+
     pq.write_table(
         table,
         output_path,
-        compression="zstd",
+        compression="none",
         row_group_size=row_group_size,
         write_page_index=True,
         write_statistics=True,

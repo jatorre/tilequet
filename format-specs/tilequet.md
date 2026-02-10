@@ -110,6 +110,12 @@ The optimal Parquet row group size depends on the primary access pattern:
 
 The reference implementation uses 200 rows as the default.
 
+### Compression
+
+TileQuet files default to **no Parquet-level compression**. This is because the `data` column — which accounts for virtually all of the file size — contains tile content (PNG, JPEG, WebP, PBF, GLB) that is already compressed by its own format. Applying Parquet compression (zstd, snappy, gzip) on top of pre-compressed data wastes CPU on both read and write with negligible size reduction. The `tile` and `metadata` columns are too small for compression to matter.
+
+Producers MAY enable Parquet compression for tile sets containing uncompressed data (e.g., raw binary formats), but the default SHOULD be no compression.
+
 ## Metadata Specification
 
 The metadata is stored as a JSON string in the `metadata` column where `tile = 0`. The JSON object has the following structure:
@@ -144,6 +150,15 @@ The metadata is stored as a JSON string in the `metadata` column where `tile = 0
             }
         }
     ],
+    "tilejson": {
+        "tilejson": "3.0.0",
+        "tiles": [],
+        "bounds": [-11.25, 42.55, 11.95, 44.01],
+        "minzoom": 0,
+        "maxzoom": 14,
+        "name": "OpenStreetMap Firenze",
+        "vector_layers": [{"id": "water", "fields": {"class": "string"}}]
+    },
     "processing": {
         "source_format": "pmtiles",
         "created_by": "tilequet-io 0.1.0",
@@ -197,11 +212,23 @@ The metadata is stored as a JSON string in the `metadata` column where `tile = 0
 
   This follows the [TileJSON](https://github.com/mapbox/tilejson-spec) `vector_layers` convention.
 
+- **TileJSON** (recommended)
+  - `tilejson`: A [TileJSON 3.0.0](https://github.com/mapbox/tilejson-spec/tree/master/3.0.0) compliant object. This enables downstream tools to reconstruct a standards-compliant TileJSON endpoint without custom parsing. The `tiles` array is stored empty (`[]`) — consumers fill it in with their serving URL.
+
 - **Processing Information** (optional)
   - `processing`: Object documenting the conversion source:
-    - `source_format`: String indicating the source format (`"pmtiles"`, `"mbtiles"`, `"geopackage"`, `"url_template"`, `"arcgis_mapserver"`, `"3dtiles"`).
+    - `source_format`: String indicating the source format. Known values: `"pmtiles"`, `"mbtiles"`, `"geopackage"`, `"url_template"`, `"tilejson"`, `"wms"`, `"wmts"`, `"ogc_api_tiles"`, `"ogc_api_maps"`, `"arcgis_mapserver"`, `"3dtiles"`, `"cog"`.
     - `created_by`: String identifying the tool and version that created the file.
     - `created_at`: ISO 8601 timestamp of file creation.
+
+- **Source-Specific Metadata** (optional)
+
+  Converters MAY include additional top-level keys to preserve source-specific information. Known sections:
+
+  - `tileset_json`: For 3D Tiles sources — the original tileset.json with content URIs rewritten to reference QUADBIN cell IDs within this file.
+  - `cog`: For Cloud Optimized GeoTIFF sources — properties of the source COG including `native_zoom`, `block_size`, `num_bands`, `color_interpretation`, `original_dtypes`, `overview_factors`, `encoding`, and `image_dimensions`.
+
+  Readers MUST ignore unrecognized top-level keys to ensure forward compatibility.
 
 ### Examples
 
@@ -253,7 +280,7 @@ The metadata is stored as a JSON string in the `metadata` column where `tile = 0
 }
 ```
 
-#### 2. Raster Tile Set (from MBTiles)
+#### 2. Raster Tile Set (from WMS)
 
 ```json
 {
@@ -261,27 +288,78 @@ The metadata is stored as a JSON string in the `metadata` column where `tile = 0
     "version": "0.1.0",
     "tile_type": "raster",
     "tile_format": "png",
-    "bounds": [-180.0, -85.05, 180.0, 85.05],
+    "bounds": [-180.0, -85.051129, 180.0, 85.051129],
     "bounds_crs": "EPSG:4326",
     "center": [0.0, 0.0, 2],
     "min_zoom": 0,
-    "max_zoom": 8,
-    "num_tiles": 87381,
+    "max_zoom": 4,
+    "num_tiles": 341,
     "tiling": {
         "scheme": "quadbin"
     },
-    "name": "Satellite Basemap",
-    "description": "Global satellite imagery tiles",
-    "attribution": "Imagery providers",
+    "name": "Weather Temperature",
+    "tilejson": {
+        "tilejson": "3.0.0",
+        "tiles": [],
+        "bounds": [-180.0, -85.051129, 180.0, 85.051129],
+        "minzoom": 0,
+        "maxzoom": 4,
+        "center": [0.0, 0.0, 0],
+        "name": "Weather Temperature"
+    },
     "processing": {
-        "source_format": "mbtiles",
+        "source_format": "wms",
         "created_by": "tilequet-io 0.1.0",
         "created_at": "2026-02-09T10:30:00Z"
     }
 }
 ```
 
-#### 3. 3D Tile Set (future, quadtree-based)
+#### 3. Raster Tile Set (from COG)
+
+```json
+{
+    "file_format": "tilequet",
+    "version": "0.1.0",
+    "tile_type": "raster",
+    "tile_format": "png",
+    "bounds": [-180.0, -66.51326, 180.0, 66.51326],
+    "bounds_crs": "EPSG:4326",
+    "center": [0.0, 0.0, 0],
+    "min_zoom": 0,
+    "max_zoom": 4,
+    "num_tiles": 341,
+    "tiling": {
+        "scheme": "quadbin"
+    },
+    "tilejson": {
+        "tilejson": "3.0.0",
+        "tiles": [],
+        "bounds": [-180.0, -66.51326, 180.0, 66.51326],
+        "minzoom": 0,
+        "maxzoom": 4
+    },
+    "processing": {
+        "source_format": "cog",
+        "created_by": "tilequet-io 0.1.0",
+        "created_at": "2026-02-09T10:30:00Z"
+    },
+    "cog": {
+        "native_zoom": 4,
+        "block_size": 256,
+        "num_bands": 4,
+        "color_interpretation": ["red", "green", "blue", "alpha"],
+        "original_dtypes": ["uint8", "uint8", "uint8", "uint8"],
+        "overview_factors": [2, 4, 8, 16],
+        "source_crs": "EPSG:3857",
+        "pixel_size_meters": 2504.688,
+        "image_dimensions": [4096, 4096],
+        "encoding": "png"
+    }
+}
+```
+
+#### 4. 3D Tile Set
 
 ```json
 {
@@ -300,6 +378,19 @@ The metadata is stored as a JSON string in the `metadata` column where `tile = 0
     },
     "name": "Madrid 3D Buildings",
     "description": "3D building models for Madrid, Spain",
+    "tilejson": {
+        "tilejson": "3.0.0",
+        "tiles": [],
+        "bounds": [-3.8, 40.3, -3.6, 40.5],
+        "minzoom": 10,
+        "maxzoom": 18,
+        "name": "Madrid 3D Buildings"
+    },
+    "tileset_json": {
+        "asset": {"version": "1.0"},
+        "geometricError": 500,
+        "root": { "..." : "rewritten tileset.json referencing QUADBIN cell IDs" }
+    },
     "processing": {
         "source_format": "3dtiles",
         "created_by": "tilequet-io 0.1.0",
