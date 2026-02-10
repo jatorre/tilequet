@@ -6,7 +6,9 @@ TileQuet stores map tile sets in Parquet format with QUADBIN spatial indexing.
 
 import json
 import logging
+import os
 import sys
+import tempfile
 from pathlib import Path
 
 import click
@@ -38,6 +40,44 @@ def _print_conversion_result(output_file: str, result: dict):
         f"({result['tile_format']}, z{result['min_zoom']}-{result['max_zoom']}) "
         f"→ {_format_bytes(file_size)}"
     )
+
+
+def _download_file(url: str, *, verbose: bool = False) -> str:
+    """Download a URL to a temporary file with progress, return the temp path."""
+    import httpx
+
+    suffix = Path(url.split("?")[0]).suffix or ".tmp"
+    fd, tmp_path = tempfile.mkstemp(suffix=suffix)
+    os.close(fd)
+
+    try:
+        with httpx.stream("GET", url, follow_redirects=True, timeout=30.0) as resp:
+            resp.raise_for_status()
+            total = int(resp.headers.get("content-length", 0))
+            downloaded = 0
+
+            with open(tmp_path, "wb") as f:
+                for chunk in resp.iter_bytes(chunk_size=8 * 1024 * 1024):
+                    f.write(chunk)
+                    downloaded += len(chunk)
+                    if total:
+                        pct = downloaded * 100 // total
+                        click.echo(
+                            f"\r  {_format_bytes(downloaded)} / {_format_bytes(total)} ({pct}%)",
+                            nl=False,
+                        )
+                    else:
+                        click.echo(f"\r  {_format_bytes(downloaded)}", nl=False)
+
+            click.echo()  # newline after progress
+    except Exception:
+        os.unlink(tmp_path)
+        raise
+
+    if verbose:
+        click.echo(f"Downloaded to {tmp_path} ({_format_bytes(os.path.getsize(tmp_path))})")
+
+    return tmp_path
 
 
 # ─── Main CLI Group ──────────────────────────────────────────────────────────
@@ -231,26 +271,45 @@ def convert_group():
 
 
 @convert_group.command("pmtiles")
-@click.argument("input_file", type=click.Path(exists=True))
+@click.argument("input_source")
 @click.argument("output_file", type=click.Path())
 @click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
 @click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
-def convert_pmtiles(input_file, output_file, row_group_size, verbose):
-    """Convert a PMTiles file to TileQuet format.
+def convert_pmtiles(input_source, output_file, row_group_size, verbose):
+    """Convert a PMTiles file or URL to TileQuet format.
 
-    INPUT_FILE is the path to the source .pmtiles file.
+    INPUT_SOURCE is a local .pmtiles file path or an HTTP(S) URL.
     OUTPUT_FILE is the path for the output .parquet file.
 
     \b
     Examples:
         tilequet-io convert pmtiles map.pmtiles map.parquet
+        tilequet-io convert pmtiles https://example.com/tiles.pmtiles output.parquet
         tilequet-io convert pmtiles tiles.pmtiles output.parquet -v
     """
     setup_logging(verbose)
-    click.echo(f"Converting {input_file} → {output_file}")
+
+    is_url = input_source.startswith("http://") or input_source.startswith("https://")
+
+    if is_url:
+        click.echo(f"Downloading {input_source}...")
+        try:
+            tmp_file = _download_file(input_source, verbose=verbose)
+        except Exception as e:
+            click.echo(f"Error downloading: {e}", err=True)
+            sys.exit(1)
+
+        input_path = tmp_file
+        click.echo(f"Converting {input_path} → {output_file}")
+    else:
+        if not os.path.exists(input_source):
+            click.echo(f"Error: file not found: {input_source}", err=True)
+            sys.exit(1)
+        input_path = input_source
+        click.echo(f"Converting {input_path} → {output_file}")
 
     try:
-        result = pmtiles2tilequet.convert(input_file, output_file, row_group_size=row_group_size, verbose=verbose)
+        result = pmtiles2tilequet.convert(input_path, output_file, row_group_size=row_group_size, verbose=verbose)
     except ImportError as e:
         click.echo(f"Error: {e}", err=True)
         sys.exit(1)
@@ -260,6 +319,9 @@ def convert_pmtiles(input_file, output_file, row_group_size, verbose):
             import traceback
             traceback.print_exc()
         sys.exit(1)
+    finally:
+        if is_url:
+            os.unlink(input_path)
 
     _print_conversion_result(output_file, result)
 
