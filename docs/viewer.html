@@ -988,8 +988,17 @@
         // deck.gl tile callback
         // ==========================================
         function getTileData({ index }) {
-            const { x, y, z } = index;
-            if (z < minZoom || z > maxZoom) return null;
+            let { x, y, z } = index;
+
+            // Clamp to available zoom range — when zoomed out below minZoom,
+            // find the ancestor tile at minZoom so we still show something
+            if (z < minZoom) {
+                const dz = minZoom - z;
+                x = x << dz;
+                y = y << dz;
+                z = minZoom;
+            }
+            if (z > maxZoom) return null;
 
             const cacheKey = `${z}/${x}/${y}`;
             if (tileCache.has(cacheKey)) return tileCache.get(cacheKey);
@@ -1187,11 +1196,11 @@
                     layers.push(new globalThis.deck.TileLayer({
                         id: 'tilequet-vector',
                         getTileData,
-                        minZoom,
+                        minZoom: 0,
                         maxZoom,
                         tileSize: 256,
                         extent: dataBounds,
-                        refinementStrategy: 'no-overlap',
+                        refinementStrategy: 'best-available',
                         maxRequests: 6,
                         maxCacheSize: 200,
                         renderSubLayers: props => {
@@ -1328,11 +1337,11 @@
                     layers.push(new globalThis.deck.TileLayer({
                         id: 'tilequet-raster',
                         getTileData,
-                        minZoom,
+                        minZoom: 0,
                         maxZoom,
                         tileSize: 256,
                         extent: dataBounds,
-                        refinementStrategy: 'no-overlap',
+                        refinementStrategy: 'best-available',
                         maxRequests: 6,
                         maxCacheSize: 200,
                         renderSubLayers: props => {
