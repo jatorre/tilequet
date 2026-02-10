@@ -220,6 +220,8 @@ def convert_group():
         tilequet-io convert url "https://tile.osm.org/{z}/{x}/{y}.png" output.parquet
         tilequet-io convert mapserver https://server/.../MapServer output.parquet
         tilequet-io convert 3dtiles https://example.com/tileset.json output.parquet
+        tilequet-io convert wms "https://wms.example.com" output.parquet -l layer1
+        tilequet-io convert wmts "https://wmts.example.com" output.parquet -l layer1
     """
     pass
 
@@ -492,6 +494,153 @@ def convert_3dtiles(tileset_url, output_file, max_tiles, row_group_size, verbose
         sys.exit(1)
 
     _print_conversion_result(output_file, result)
+
+
+@convert_group.command("wms")
+@click.argument("service_url")
+@click.argument("output_file", type=click.Path())
+@click.option("--layers", "-l", required=True, help="Comma-separated WMS layer names")
+@click.option("--min-zoom", type=int, default=0, help="Minimum zoom level (default: 0)")
+@click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
+@click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
+@click.option("--tile-size", type=int, default=256, help="Tile size in pixels (default: 256)")
+@click.option("--format", "image_format", type=str, default="image/png", help="Image format (default: image/png)")
+@click.option("--wms-version", type=str, default="1.3.0", help="WMS version (default: 1.3.0)")
+@click.option("--styles", type=str, default="", help="WMS styles parameter")
+@click.option("--crs", type=str, default="EPSG:3857", help="CRS for requests (default: EPSG:3857)")
+@click.option("--transparent/--no-transparent", default=True, help="Request transparent background")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_wms(service_url, output_file, layers, min_zoom, max_zoom, bbox,
+                tile_size, image_format, wms_version, styles, crs, transparent,
+                row_group_size, verbose):
+    """Convert a WMS (Web Map Service) to TileQuet format.
+
+    SERVICE_URL is the WMS service base URL.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert wms "https://geo.weather.gc.ca/geomet" weather.parquet -l GDPS.ETA_TT
+        tilequet-io convert wms "https://ows.example.com/wms" output.parquet -l layer1 --max-zoom 8
+        tilequet-io convert wms "https://wms.example.com" output.parquet -l layer1 --bbox "-10,35,5,45"
+    """
+    setup_logging(verbose)
+
+    from . import wms2tilequet
+
+    # Parse bbox
+    bbox_tuple = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("Must have exactly 4 values")
+            bbox_tuple = tuple(parts)
+        except ValueError as e:
+            click.echo(f"Error: Invalid bbox format. Expected west,south,east,north: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Fetching WMS tiles from {service_url}")
+    click.echo(f"  Layers: {layers}")
+    click.echo(f"  Zoom: {min_zoom}-{max_zoom}")
+    if bbox_tuple:
+        click.echo(f"  Bbox: {bbox_tuple}")
+
+    try:
+        result = wms2tilequet.convert(
+            service_url, output_file,
+            layers=layers,
+            min_zoom=min_zoom, max_zoom=max_zoom,
+            bbox=bbox_tuple, tile_size=tile_size,
+            image_format=image_format, version=wms_version,
+            styles=styles, crs=crs, transparent=transparent,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
+
+
+@convert_group.command("wmts")
+@click.argument("service_url")
+@click.argument("output_file", type=click.Path())
+@click.option("--layer", "-l", required=True, help="WMTS layer name")
+@click.option("--tile-matrix-set", type=str, default="GoogleMapsCompatible", help="Tile matrix set (default: GoogleMapsCompatible)")
+@click.option("--min-zoom", type=int, default=0, help="Minimum zoom level (default: 0)")
+@click.option("--max-zoom", type=int, default=5, help="Maximum zoom level (default: 5)")
+@click.option("--bbox", type=str, default=None, help="Bounding box: west,south,east,north (WGS84)")
+@click.option("--format", "image_format", type=str, default="image/png", help="Image format (default: image/png)")
+@click.option("--style", type=str, default="default", help="WMTS style (default: default)")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_wmts(service_url, output_file, layer, tile_matrix_set, min_zoom, max_zoom,
+                 bbox, image_format, style, row_group_size, verbose):
+    """Convert a WMTS (Web Map Tile Service) to TileQuet format.
+
+    SERVICE_URL is the WMTS service base URL.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert wmts "https://geo.weather.gc.ca/geomet" weather.parquet -l GDPS.ETA_TT
+        tilequet-io convert wmts "https://wmts.example.com" output.parquet -l layer1 --max-zoom 8
+    """
+    setup_logging(verbose)
+
+    from . import wmts2tilequet
+
+    # Parse bbox
+    bbox_tuple = None
+    if bbox:
+        try:
+            parts = [float(x.strip()) for x in bbox.split(",")]
+            if len(parts) != 4:
+                raise ValueError("Must have exactly 4 values")
+            bbox_tuple = tuple(parts)
+        except ValueError as e:
+            click.echo(f"Error: Invalid bbox format. Expected west,south,east,north: {e}", err=True)
+            sys.exit(1)
+
+    click.echo(f"Fetching WMTS tiles from {service_url}")
+    click.echo(f"  Layer: {layer}")
+    click.echo(f"  TileMatrixSet: {tile_matrix_set}")
+    click.echo(f"  Zoom: {min_zoom}-{max_zoom}")
+    if bbox_tuple:
+        click.echo(f"  Bbox: {bbox_tuple}")
+
+    try:
+        result = wmts2tilequet.convert(
+            service_url, output_file,
+            layer=layer, tile_matrix_set=tile_matrix_set,
+            min_zoom=min_zoom, max_zoom=max_zoom,
+            bbox=bbox_tuple, image_format=image_format,
+            style=style,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
 
 
 # ─── Validate Command ────────────────────────────────────────────────────────

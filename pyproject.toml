@@ -39,6 +39,8 @@ rich = ["rich>=13"]
 mapserver = ["httpx>=0.25"]
 tiles3d = ["httpx>=0.25"]
 url = ["httpx>=0.25"]
+wms = ["httpx>=0.25"]
+wmts = ["httpx>=0.25"]
 all = [
     "pmtiles>=3",
     "rich>=13",
