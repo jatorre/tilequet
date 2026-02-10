@@ -15,7 +15,7 @@ hero_tagline: "Govern, query, and analyze tile sets with SQL. Bring map tiles in
   </div>
   <div class="feature-card">
     <h3>Tools</h3>
-    <p>Convert PMTiles, MBTiles, GeoPackage, XYZ/TMS URLs, ArcGIS MapServer, and 3D Tiles to TileQuet. Query tile sets with DuckDB, BigQuery, or Snowflake.</p>
+    <p>Convert from 12 sources — PMTiles, MBTiles, GeoPackage, XYZ/TMS URLs, WMS, WMTS, TileJSON, OGC API Tiles/Maps, ArcGIS MapServer, 3D Tiles, and COG. Query with DuckDB, BigQuery, or Snowflake.</p>
     <a href="{{ site.baseurl }}/cli">View CLI reference &rarr;</a>
   </div>
   <div class="feature-card">
@@ -56,8 +56,14 @@ TileQuet changes this. By storing tiles in Apache Parquet — an open columnar f
 | **MBTiles** | `.mbtiles` | SQLite-based tile storage |
 | **GeoPackage** | `.gpkg` | OGC standard SQLite tiles |
 | **URL Template** | `{z}/{x}/{y}` | XYZ and TMS tile servers |
-| **ArcGIS MapServer** | REST API | Pre-rendered map tiles |
+| **TileJSON** | `tilejson` | TileJSON endpoint with tile URL templates |
+| **WMS** | GetMap | OGC Web Map Service |
+| **WMTS** | GetTile | OGC Web Map Tile Service |
+| **OGC API - Tiles** | REST | Modern OGC tile API |
+| **OGC API - Maps** | REST | Modern OGC map rendering API |
+| **ArcGIS MapServer** | REST API | Esri pre-rendered map tiles |
 | **3D Tiles** | `tileset.json` | OGC 3D Tiles (glTF/GLB/b3dm) |
+| **COG** | `.tif` | Cloud Optimized GeoTIFF (tile-aligned only) |
 
 ---
 
@@ -147,7 +153,7 @@ tilequet-io validate output.parquet
 
 View TileQuet files directly in your browser — no server needed. The viewer reads Parquet files via HTTP range requests using [hyparquet](https://github.com/hyparam/hyparquet) and renders tiles with [deck.gl](https://deck.gl).
 
-Supports **raster tiles** (PNG, JPEG, WebP) and **vector tiles** (PBF/MVT) with automatic format detection from TileQuet metadata.
+Supports **raster tiles** (PNG, JPEG, WebP), **vector tiles** (PBF/MVT), and **3D tiles** (GLB/b3dm) with automatic format detection from TileQuet metadata.
 
 <div style="margin-top: 1rem;">
 <a href="{{ site.baseurl }}/viewer.html" class="btn btn-primary">Open Viewer</a>
@@ -175,6 +181,7 @@ Together, they bring the full spectrum of geospatial data into the modern analyt
 
 ### v0.1.0 (Experimental)
 - **Initial release**: Core specification for storing tile sets in Parquet with QUADBIN spatial indexing
-- **6 converters**: PMTiles, MBTiles, GeoPackage, URL template (XYZ/TMS), ArcGIS MapServer, OGC 3D Tiles
+- **12 converters**: PMTiles, MBTiles, GeoPackage, URL template (XYZ/TMS), TileJSON, WMS, WMTS, OGC API Tiles, OGC API Maps, ArcGIS MapServer, OGC 3D Tiles, COG
 - **CLI**: inspect (rich + plain text), convert, validate (with --json), split-zoom
+- **Viewer**: Browser-based viewer for raster, vector, and 3D tiles via HTTP range requests
 - **Pluggable tiling scheme**: QUADBIN in v0.1.0, with octree and BVH schemes planned

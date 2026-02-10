@@ -43,8 +43,14 @@ pip install "tilequet-io[all]"
 | MBTiles | `convert mbtiles` | none (sqlite3) |
 | GeoPackage | `convert geopackage` | none (sqlite3) |
 | URL Template (XYZ/TMS) | `convert url` | `httpx` |
+| TileJSON | `convert tilejson` | `httpx` |
+| WMS | `convert wms` | `httpx` |
+| WMTS | `convert wmts` | `httpx` |
+| OGC API - Tiles | `convert ogc-tiles` | `httpx` |
+| OGC API - Maps | `convert ogc-maps` | `httpx` |
 | ArcGIS MapServer | `convert mapserver` | `httpx` |
 | OGC 3D Tiles | `convert 3dtiles` | `httpx` |
+| Cloud Optimized GeoTIFF | `convert cog` | `rasterio`, `Pillow` |
 
 ## CLI Usage
 
@@ -56,6 +62,12 @@ tilequet-io convert geopackage input.gpkg output.parquet
 tilequet-io convert url "https://tile.osm.org/{z}/{x}/{y}.png" output.parquet --max-zoom 3
 tilequet-io convert mapserver https://server/.../MapServer output.parquet
 tilequet-io convert 3dtiles https://example.com/tileset.json output.parquet
+tilequet-io convert wms "https://ows.example.com/wms" output.parquet -l layer_name --max-zoom 4
+tilequet-io convert wmts "https://ows.example.com/wmts" output.parquet -l layer_name
+tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet
+tilequet-io convert ogc-tiles "https://api.example.com" output.parquet -c collection_id
+tilequet-io convert ogc-maps "https://api.example.com" output.parquet -c collection_id
+tilequet-io convert cog aligned.tif output.parquet
 
 # Inspect a TileQuet file
 tilequet-io inspect output.parquet

@@ -31,13 +31,19 @@ Source Data -> PMTiles (serving) + TileQuet (governance)
 
 ### What source formats are supported?
 
-TileQuet can convert from:
-- **PMTiles** (v3) - Cloud-optimized tile archive
-- **MBTiles** - SQLite-based tile storage
-- **GeoPackage** - OGC standard SQLite tiles
-- **URL Template** - XYZ and TMS tile servers (`{z}/{x}/{y}`)
-- **ArcGIS MapServer** - Pre-rendered map tiles via REST API
-- **OGC 3D Tiles** - tileset.json with glTF/GLB/b3dm/pnts content
+TileQuet can convert from 12 sources:
+- **PMTiles** (v3) — Cloud-optimized tile archive
+- **MBTiles** — SQLite-based tile storage
+- **GeoPackage** — OGC standard SQLite tiles
+- **URL Template** — XYZ and TMS tile servers (`{z}/{x}/{y}`)
+- **TileJSON** — Metadata endpoint with tile URL templates
+- **WMS** — OGC Web Map Service (GetMap requests)
+- **WMTS** — OGC Web Map Tile Service (GetTile requests)
+- **OGC API - Tiles** — Modern OGC RESTful tile API
+- **OGC API - Maps** — Modern OGC RESTful map rendering API
+- **ArcGIS MapServer** — Esri pre-rendered map tiles via REST API
+- **OGC 3D Tiles** — tileset.json with glTF/GLB/b3dm/pnts content
+- **Cloud Optimized GeoTIFF** — Tile-aligned COGs in EPSG:3857 (non-aligned rasters should use [RaQuet](https://raquet.io))
 
 ---
 
@@ -78,7 +84,7 @@ For 3D tiles with octree subdivision or explicit bounding volume hierarchies, fu
 
 ### How big are TileQuet files compared to the source?
 
-File sizes are typically similar to the source, since tile content is stored as-is. The Parquet overhead (schema, row group metadata, page indexes) is minimal. Parquet's built-in compression (ZSTD) may provide some additional compression.
+File sizes are typically similar to the source, since tile content is stored as-is. The Parquet overhead (schema, row group metadata, page indexes) is minimal. TileQuet defaults to no Parquet-level compression because tile data (PNG, JPEG, PBF, etc.) is already compressed by its own format.
 
 ### Can I query TileQuet files remotely (from S3/GCS)?
 

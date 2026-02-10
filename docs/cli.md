@@ -14,8 +14,11 @@ pip install tilequet-io
 # With PMTiles support
 pip install "tilequet-io[pmtiles]"
 
-# With network converters (URL template, MapServer, 3D Tiles)
+# With network converters (URL, WMS, WMTS, MapServer, TileJSON, OGC APIs, 3D Tiles)
 pip install "tilequet-io[url]"
+
+# With COG support
+pip install "tilequet-io[cog]"
 
 # All features
 pip install "tilequet-io[all]"
@@ -37,8 +40,14 @@ uv add "tilequet-io[all]"
 | `convert mbtiles` | Convert MBTiles (SQLite) to TileQuet |
 | `convert geopackage` | Convert GeoPackage tiles to TileQuet |
 | `convert url` | Convert XYZ/TMS URL template to TileQuet |
+| `convert tilejson` | Convert TileJSON endpoint to TileQuet |
+| `convert wms` | Convert WMS (Web Map Service) to TileQuet |
+| `convert wmts` | Convert WMTS (Web Map Tile Service) to TileQuet |
+| `convert ogc-tiles` | Convert OGC API - Tiles endpoint to TileQuet |
+| `convert ogc-maps` | Convert OGC API - Maps endpoint to TileQuet |
 | `convert mapserver` | Convert ArcGIS MapServer to TileQuet |
 | `convert 3dtiles` | Convert OGC 3D Tiles to TileQuet |
+| `convert cog` | Convert tile-aligned COG to TileQuet |
 | `inspect` | Display metadata and statistics |
 | `validate` | Validate file structure and data integrity |
 | `split-zoom` | Split by zoom level for optimized remote access |
@@ -224,6 +233,220 @@ tilequet-io convert 3dtiles https://example.com/tileset.json test.parquet --max-
 ```
 
 **Requirements:** `pip install "tilequet-io[tiles3d]"`
+
+---
+
+## convert wms
+
+Convert tiles from a WMS (Web Map Service) endpoint to TileQuet format. Computes Web Mercator bounding boxes per XYZ tile and issues WMS GetMap requests.
+
+```bash
+tilequet-io convert wms SERVICE_URL OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--layers, -l` | (required) | Comma-separated WMS layer names |
+| `--min-zoom` | `0` | Minimum zoom level |
+| `--max-zoom` | `5` | Maximum zoom level |
+| `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
+| `--tile-size` | `256` | Tile width/height in pixels |
+| `--format` | `image/png` | WMS image format |
+| `--wms-version` | `1.3.0` | WMS version (1.1.1 or 1.3.0) |
+| `--styles` | `""` | WMS styles parameter |
+| `--crs` | `EPSG:3857` | Coordinate reference system |
+| `--transparent/--no-transparent` | `true` | Request transparent background |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+# Canadian weather temperature layer
+tilequet-io convert wms "https://geo.weather.gc.ca/geomet" weather.parquet \
+  -l GDPS.ETA_TT --max-zoom 4
+
+# With bounding box and custom format
+tilequet-io convert wms "https://ows.example.com/wms" output.parquet \
+  -l layer1,layer2 --bbox "-10,35,5,45" --max-zoom 8 --format image/jpeg
+```
+
+**Requirements:** `pip install "tilequet-io[wms]"`
+
+---
+
+## convert wmts
+
+Convert tiles from a WMTS (Web Map Tile Service) endpoint to TileQuet format. Uses KVP GetTile requests.
+
+```bash
+tilequet-io convert wmts SERVICE_URL OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--layer, -l` | (required) | WMTS layer name |
+| `--tile-matrix-set` | `GoogleMapsCompatible` | Tile matrix set identifier |
+| `--min-zoom` | `0` | Minimum zoom level |
+| `--max-zoom` | `5` | Maximum zoom level |
+| `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
+| `--format` | `image/png` | Image format |
+| `--style` | `default` | WMTS style name |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+tilequet-io convert wmts "https://wmts.example.com/service" output.parquet \
+  -l satellite --max-zoom 6
+
+tilequet-io convert wmts "https://wmts.example.com/service" output.parquet \
+  -l terrain --tile-matrix-set WebMercatorQuad --bbox "-10,35,5,45"
+```
+
+**Requirements:** `pip install "tilequet-io[wmts]"`
+
+---
+
+## convert tilejson
+
+Convert tiles from a TileJSON endpoint to TileQuet format. Fetches the TileJSON metadata, extracts tile URL templates, then downloads tiles.
+
+```bash
+tilequet-io convert tilejson TILEJSON_URL OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--min-zoom` | from TileJSON | Override minimum zoom level |
+| `--max-zoom` | from TileJSON | Override maximum zoom level |
+| `--bbox` | from TileJSON | Bounding box: `west,south,east,north` (WGS84) |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+# Uses bounds and zoom from the TileJSON metadata
+tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet
+
+# Override zoom range
+tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet \
+  --min-zoom 2 --max-zoom 8
+```
+
+**Requirements:** `pip install "tilequet-io[tilejson]"`
+
+---
+
+## convert ogc-tiles
+
+Convert tiles from an OGC API - Tiles endpoint to TileQuet format. The modern REST successor to WMTS.
+
+```bash
+tilequet-io convert ogc-tiles BASE_URL OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--collection, -c` | (required) | Collection identifier |
+| `--tile-matrix-set` | `WebMercatorQuad` | Tile matrix set identifier |
+| `--min-zoom` | `0` | Minimum zoom level |
+| `--max-zoom` | `5` | Maximum zoom level |
+| `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+tilequet-io convert ogc-tiles "https://api.example.com" output.parquet \
+  -c buildings --max-zoom 10
+
+tilequet-io convert ogc-tiles "https://api.example.com" output.parquet \
+  -c elevation --bbox "-122.5,37.5,-122.0,38.0"
+```
+
+**Requirements:** `pip install "tilequet-io[ogc]"`
+
+---
+
+## convert ogc-maps
+
+Convert map images from an OGC API - Maps endpoint to TileQuet format. The modern REST successor to WMS. Computes WGS84 bounding boxes per tile and requests rendered images.
+
+```bash
+tilequet-io convert ogc-maps BASE_URL OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--collection, -c` | (required) | Collection identifier |
+| `--min-zoom` | `0` | Minimum zoom level |
+| `--max-zoom` | `5` | Maximum zoom level |
+| `--bbox` | world | Bounding box: `west,south,east,north` (WGS84) |
+| `--tile-size` | `256` | Tile width/height in pixels |
+| `--format` | `image/png` | Image format |
+| `--transparent/--no-transparent` | `true` | Request transparent background |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+tilequet-io convert ogc-maps "https://api.example.com" output.parquet \
+  -c temperature --max-zoom 6
+
+tilequet-io convert ogc-maps "https://api.example.com" output.parquet \
+  -c landuse --bbox "-10,35,5,45" --format image/jpeg
+```
+
+**Requirements:** `pip install "tilequet-io[ogc]"`
+
+---
+
+## convert cog
+
+Convert a tile-aligned Cloud Optimized GeoTIFF (COG) to TileQuet format. Only imports COGs that are perfectly aligned with the Web Mercator tile grid (EPSG:3857, 256x256 or 512x512 blocks, aligned origin, power-of-2 overviews). For non-aligned rasters, use [RaQuet](https://github.com/jatorre/raquet).
+
+```bash
+tilequet-io convert cog INPUT OUTPUT [OPTIONS]
+```
+
+### Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--min-zoom` | lowest available | Minimum zoom level |
+| `--max-zoom` | native resolution | Maximum zoom level |
+| `--format` | `png` | Image encoding (`png` or `jpeg`) |
+| `--row-group-size` | `200` | Parquet row group size |
+| `-v, --verbose` | — | Enable verbose output |
+
+### Examples
+
+```bash
+# Convert a tile-aligned COG
+tilequet-io convert cog aligned_raster.tif output.parquet -v
+
+# Convert with JPEG encoding for smaller files
+tilequet-io convert cog satellite.tif output.parquet --format jpeg
+```
+
+If the COG is not tile-aligned, the converter will display the specific alignment issues and suggest using RaQuet instead.
+
+**Requirements:** `pip install "tilequet-io[cog]"`
 
 ---
 
