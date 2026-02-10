@@ -43,10 +43,13 @@ wms = ["httpx>=0.25"]
 wmts = ["httpx>=0.25"]
 tilejson = ["httpx>=0.25"]
 ogc = ["httpx>=0.25"]
+cog = ["rasterio>=1.3", "Pillow>=9"]
 all = [
     "pmtiles>=3",
     "rich>=13",
     "httpx>=0.25",
+    "rasterio>=1.3",
+    "Pillow>=9",
 ]
 
 [build-system]

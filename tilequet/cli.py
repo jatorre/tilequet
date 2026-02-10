@@ -225,6 +225,7 @@ def convert_group():
         tilequet-io convert tilejson "https://example.com/tiles.json" output.parquet
         tilequet-io convert ogc-tiles "https://api.example.com" output.parquet -c layer1
         tilequet-io convert ogc-maps "https://api.example.com" output.parquet -c layer1
+        tilequet-io convert cog aligned.tif output.parquet
     """
     pass
 
@@ -849,6 +850,62 @@ def convert_ogc_maps(base_url, output_file, collection, min_zoom, max_zoom, bbox
     _print_conversion_result(output_file, result)
     if result.get("tiles_skipped"):
         click.echo(f"  ({result['tiles_skipped']} empty/missing tiles skipped)")
+
+
+@convert_group.command("cog")
+@click.argument("cog_path")
+@click.argument("output_file", type=click.Path())
+@click.option("--min-zoom", type=int, default=None, help="Minimum zoom level (default: lowest available)")
+@click.option("--max-zoom", type=int, default=None, help="Maximum zoom level (default: native resolution)")
+@click.option("--format", "image_format", type=click.Choice(["png", "jpeg"]), default="png", help="Image format (default: png)")
+@click.option("--row-group-size", type=int, default=200, help="Rows per Parquet row group (default: 200)")
+@click.option("-v", "--verbose", is_flag=True, help="Enable verbose output")
+def convert_cog(cog_path, output_file, min_zoom, max_zoom, image_format, row_group_size, verbose):
+    """Convert a tile-aligned COG to TileQuet format.
+
+    Only imports COGs perfectly aligned with the Web Mercator tile grid
+    (EPSG:3857, 256x256 blocks, aligned origin, power-of-2 overviews).
+    For non-aligned rasters, use RaQuet instead.
+
+    COG_PATH is a local path or URL to the COG file.
+    OUTPUT_FILE is the path for the output .parquet file.
+
+    \b
+    Examples:
+        tilequet-io convert cog satellite.tif satellite.parquet
+        tilequet-io convert cog https://example.com/data.tif output.parquet
+        tilequet-io convert cog data.tif output.parquet --format jpeg --max-zoom 12
+    """
+    setup_logging(verbose)
+
+    from . import cog2tilequet
+
+    click.echo(f"Importing COG: {cog_path}")
+
+    try:
+        result = cog2tilequet.convert(
+            cog_path, output_file,
+            min_zoom=min_zoom, max_zoom=max_zoom,
+            image_format=image_format,
+            row_group_size=row_group_size, verbose=verbose,
+        )
+    except ImportError as e:
+        click.echo(f"Error: {e}", err=True)
+        sys.exit(1)
+    except ValueError as e:
+        # Alignment validation errors — show the helpful message
+        click.echo(f"\n{e}", err=True)
+        sys.exit(1)
+    except Exception as e:
+        click.echo(f"Error during conversion: {e}", err=True)
+        if verbose:
+            import traceback
+            traceback.print_exc()
+        sys.exit(1)
+
+    _print_conversion_result(output_file, result)
+    if result.get("tiles_skipped"):
+        click.echo(f"  ({result['tiles_skipped']} empty tiles skipped)")
 
 
 # ─── Validate Command ────────────────────────────────────────────────────────
