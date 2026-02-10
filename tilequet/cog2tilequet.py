@@ -22,7 +22,7 @@ from typing import Any
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, TileQuetWriter
 
 logger = logging.getLogger(__name__)
 
@@ -273,7 +273,7 @@ def convert(
         tiles_per_row = info["width"] // block_size
         tiles_per_col = info["height"] // block_size
 
-        tiles = []
+        writer = TileQuetWriter(output_path, row_group_size=row_group_size)
         tiles_skipped = 0
 
         for z in sorted(available_zooms.keys()):
@@ -348,12 +348,12 @@ def convert(
                     tile_x = z_tile_x_start + tx
                     tile_y = z_tile_y_start + ty
                     cell = quadbin.tile_to_cell((tile_x, tile_y, z))
-                    tiles.append({"tile": cell, "data": encoded})
+                    writer.add_tile(cell, encoded)
 
-                    if verbose and len(tiles) % 100 == 0:
-                        logger.info("Extracted %d tiles...", len(tiles))
+                    if verbose and writer.tile_count % 100 == 0:
+                        logger.info("Extracted %d tiles...", writer.tile_count)
 
-    if not tiles:
+    if writer.tile_count == 0:
         raise ValueError("No non-empty tiles were extracted from the COG")
 
     tile_format = image_format
@@ -361,7 +361,7 @@ def convert(
 
     if verbose:
         logger.info("Extracted %d tiles (%d empty skipped)",
-                     len(tiles), tiles_skipped)
+                     writer.tile_count, tiles_skipped)
 
     # Convert bounds to WGS84
     bounds = _web_mercator_to_wgs84_bounds(*info["bounds_3857"])
@@ -400,19 +400,19 @@ def convert(
         center=center,
         min_zoom=effective_min_zoom,
         max_zoom=effective_max_zoom,
-        num_tiles=len(tiles),
+        num_tiles=writer.tile_count,
         source_format="cog",
         tilejson=tilejson,
         cog=cog_info,
     )
 
-    write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+    writer.close(metadata)
 
     if verbose:
-        logger.info("Written %d tiles to %s", len(tiles), output_path)
+        logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
     return {
-        "num_tiles": len(tiles),
+        "num_tiles": writer.tile_count,
         "tile_type": tile_type,
         "tile_format": tile_format,
         "min_zoom": effective_min_zoom,

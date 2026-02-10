@@ -11,7 +11,7 @@ import logging
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import TileQuetWriter, build_tilejson, create_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -106,19 +106,17 @@ def convert(
         center = [center_lon, center_lat, center_zoom]
 
         # Read all tiles using the all_tiles iterator
-        tiles = []
-        tile_count = 0
+        writer = TileQuetWriter(output_path, row_group_size=row_group_size)
 
         for (z, x, y), tile_data in all_tiles(source):
             cell = quadbin.tile_to_cell((x, y, z))
-            tiles.append({"tile": cell, "data": tile_data})
-            tile_count += 1
+            writer.add_tile(cell, tile_data)
 
-            if verbose and tile_count % 10000 == 0:
-                logger.info("Read %d tiles...", tile_count)
+            if verbose and writer.tile_count % 10000 == 0:
+                logger.info("Read %d tiles...", writer.tile_count)
 
         if verbose:
-            logger.info("Read %d tiles total from PMTiles", tile_count)
+            logger.info("Read %d tiles total from PMTiles", writer.tile_count)
 
         # Extract layer information for vector tiles
         layers = None
@@ -170,7 +168,7 @@ def convert(
             center=center,
             min_zoom=min_zoom,
             max_zoom=max_zoom,
-            num_tiles=len(tiles),
+            num_tiles=writer.tile_count,
             name=name,
             description=description,
             attribution=attribution,
@@ -180,13 +178,13 @@ def convert(
         )
 
         # Write TileQuet file
-        write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+        writer.close(metadata)
 
         if verbose:
-            logger.info("Written %d tiles to %s", len(tiles), output_path)
+            logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
         return {
-            "num_tiles": len(tiles),
+            "num_tiles": writer.tile_count,
             "tile_type": tile_type,
             "tile_format": tile_format,
             "min_zoom": min_zoom,

@@ -16,7 +16,7 @@ from typing import Any
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, TileQuetWriter
 from .mbtiles2tilequet import detect_tile_format, tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -159,7 +159,7 @@ def convert(
 
     client = _get_http_client()
 
-    tiles = []
+    writer = TileQuetWriter(output_path, row_group_size=row_group_size)
     tile_format = None
     tile_type = None
     tiles_fetched = 0
@@ -210,7 +210,7 @@ def convert(
                         logger.info("Detected format: %s (%s)", tile_format, tile_type)
 
                 cell = quadbin.tile_to_cell((x, y, z))
-                tiles.append({"tile": cell, "data": data})
+                writer.add_tile(cell, data)
                 tiles_fetched += 1
 
                 if verbose and tiles_fetched % 100 == 0:
@@ -219,7 +219,7 @@ def convert(
     finally:
         client.close()
 
-    if not tiles:
+    if writer.tile_count == 0:
         raise ValueError("No tiles were fetched from the WMS service")
 
     if tile_format is None:
@@ -249,18 +249,18 @@ def convert(
         center=center,
         min_zoom=min_zoom,
         max_zoom=max_zoom,
-        num_tiles=len(tiles),
+        num_tiles=writer.tile_count,
         source_format="wms",
         tilejson=tilejson,
     )
 
-    write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+    writer.close(metadata)
 
     if verbose:
-        logger.info("Written %d tiles to %s", len(tiles), output_path)
+        logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
     return {
-        "num_tiles": len(tiles),
+        "num_tiles": writer.tile_count,
         "tile_type": tile_type,
         "tile_format": tile_format,
         "min_zoom": min_zoom,

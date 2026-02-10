@@ -22,7 +22,7 @@ from urllib.parse import urljoin
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, TileQuetWriter
 
 logger = logging.getLogger(__name__)
 
@@ -331,7 +331,7 @@ def convert(
             tile_refs = tile_refs[:max_tiles]
 
         # Fetch tile content and build URI → QUADBIN mapping
-        tiles = []
+        writer = TileQuetWriter(output_path, row_group_size=row_group_size)
         uri_to_quadbin: dict[str, int] = {}
         used_cells: set[int] = set()
         tile_format = None
@@ -385,7 +385,7 @@ def convert(
                 max_zoom = max(max_zoom, 0)
 
             used_cells.add(cell)
-            tiles.append({"tile": cell, "data": data})
+            writer.add_tile(cell, data)
 
             # Map original URI → QUADBIN cell for tileset.json rewriting
             uri_to_quadbin[ref["original_uri"]] = cell
@@ -396,7 +396,7 @@ def convert(
     finally:
         client.close()
 
-    if not tiles:
+    if writer.tile_count == 0:
         raise ValueError("No tiles were fetched from the 3D Tiles tileset")
 
     if tile_format is None:
@@ -414,7 +414,7 @@ def convert(
         overall_bounds = [-180, -85.051129, 180, 85.051129]
 
     if verbose:
-        logger.info("Fetched %d 3D tiles", len(tiles))
+        logger.info("Fetched %d 3D tiles", writer.tile_count)
 
     # Rewrite tileset.json URIs to QUADBIN cell IDs
     rewritten_tileset = _rewrite_tileset_uris(tileset, uri_to_quadbin)
@@ -439,19 +439,19 @@ def convert(
         center=center,
         min_zoom=min_zoom,
         max_zoom=max_zoom,
-        num_tiles=len(tiles),
+        num_tiles=writer.tile_count,
         source_format="3dtiles",
         tileset_json=rewritten_tileset,
         tilejson=tilejson,
     )
 
-    write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+    writer.close(metadata)
 
     if verbose:
-        logger.info("Written %d tiles to %s", len(tiles), output_path)
+        logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
     return {
-        "num_tiles": len(tiles),
+        "num_tiles": writer.tile_count,
         "tile_type": "3d",
         "tile_format": tile_format,
         "min_zoom": min_zoom,

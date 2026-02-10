@@ -139,3 +139,89 @@ def test_read_metadata_nonexistent(tmp_dir):
     import pytest
     with pytest.raises(Exception):
         read_metadata(str(tmp_dir / "nonexistent.parquet"))
+
+
+# --- TileQuetWriter streaming tests ---
+
+
+def test_tilequet_writer_basic(tmp_dir):
+    """Test TileQuetWriter produces a valid file with correct metadata."""
+    import quadbin
+    from tilequet.metadata import TileQuetWriter
+
+    filepath = str(tmp_dir / "streamed.parquet")
+    writer = TileQuetWriter(filepath, row_group_size=2)
+
+    tiles_data = [
+        (quadbin.tile_to_cell((0, 0, 0)), b"tile0"),
+        (quadbin.tile_to_cell((0, 0, 1)), b"tile1"),
+        (quadbin.tile_to_cell((1, 0, 1)), b"tile2"),
+    ]
+    for tile_id, data in tiles_data:
+        writer.add_tile(tile_id, data)
+
+    assert writer.tile_count == 3
+
+    metadata = create_metadata(
+        tile_type="raster", tile_format="png",
+        min_zoom=0, max_zoom=1, num_tiles=writer.tile_count,
+        source_format="test",
+    )
+    writer.close(metadata)
+
+    read_meta = read_metadata(filepath)
+    assert read_meta["num_tiles"] == 3
+    assert read_meta["file_format"] == "tilequet"
+
+
+def test_tilequet_writer_flushes_on_memory(tmp_dir):
+    """Test that TileQuetWriter flushes when memory limit is reached."""
+    import pyarrow.parquet as pq
+    import quadbin
+    from tilequet.metadata import TileQuetWriter
+
+    filepath = str(tmp_dir / "flushed.parquet")
+    # max_memory_mb=0 forces flush on every add_tile call
+    writer = TileQuetWriter(filepath, row_group_size=2, max_memory_mb=0)
+
+    for i in range(10):
+        cell = quadbin.tile_to_cell((i % 4, 0, 2))
+        writer.add_tile(cell, b"x" * 100)
+
+    metadata = create_metadata(
+        tile_type="raster", tile_format="png",
+        min_zoom=2, max_zoom=2, num_tiles=writer.tile_count,
+    )
+    writer.close(metadata)
+
+    pf = pq.ParquetFile(filepath)
+    assert pf.metadata.num_row_groups > 1
+    assert pf.metadata.num_rows == 11  # 10 tiles + 1 metadata row
+
+
+def test_tilequet_writer_validates(tmp_dir):
+    """Test that validation passes on writer-produced files."""
+    import quadbin
+    from tilequet.metadata import TileQuetWriter
+    from tilequet.validate import validate_tilequet
+
+    filepath = str(tmp_dir / "validated.parquet")
+    writer = TileQuetWriter(filepath, row_group_size=10)
+
+    for z in range(3):
+        for x in range(1 << z):
+            for y in range(1 << z):
+                cell = quadbin.tile_to_cell((x, y, z))
+                writer.add_tile(cell, b"\x89PNG\r\n\x1a\n" + b"\x00" * 50)
+
+    metadata = create_metadata(
+        tile_type="raster", tile_format="png",
+        bounds=[-180.0, -85.05, 180.0, 85.05],
+        min_zoom=0, max_zoom=2,
+        num_tiles=writer.tile_count,
+        source_format="test",
+    )
+    writer.close(metadata)
+
+    result = validate_tilequet(filepath)
+    assert result.is_valid

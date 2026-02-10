@@ -220,3 +220,123 @@ def write_tilequet(
         write_statistics=True,
         sorting_columns=[SortingColumn(0)],
     )
+
+
+class TileQuetWriter:
+    """Streaming writer for TileQuet Parquet files.
+
+    Writes tiles incrementally, flushing sorted batches to disk when the
+    in-memory buffer exceeds max_memory_mb.  This bounds memory usage to
+    ~2x max_memory_mb regardless of how many tiles are written.
+
+    Usage::
+
+        writer = TileQuetWriter("output.parquet")
+        for tile_id, data in source:
+            writer.add_tile(tile_id, data)
+        metadata = create_metadata(..., num_tiles=writer.tile_count, ...)
+        writer.close(metadata)
+    """
+
+    def __init__(
+        self,
+        output_path: str,
+        *,
+        row_group_size: int = 200,
+        max_memory_mb: int = 512,
+    ) -> None:
+        self._output_path = output_path
+        self._row_group_size = row_group_size
+        self._max_memory_bytes = max_memory_mb * 1024 * 1024
+        self._buffer: list[tuple[int, bytes]] = []
+        self._buffer_bytes = 0
+        self._tile_count = 0
+        self._closed = False
+
+        schema = TILEQUET_SCHEMA.with_metadata({
+            b"tilequet:version": TILEQUET_VERSION.encode(),
+        })
+
+        self._writer = pq.ParquetWriter(
+            output_path,
+            schema,
+            compression="none",
+            write_page_index=True,
+            write_statistics=True,
+        )
+
+    def add_tile(self, tile_id: int, data: bytes) -> None:
+        """Add a tile. Flushes to disk automatically when memory limit is reached."""
+        if self._closed:
+            raise RuntimeError("Writer is already closed")
+
+        self._buffer.append((tile_id, data))
+        self._buffer_bytes += len(data) + 8
+        self._tile_count += 1
+
+        if self._buffer_bytes >= self._max_memory_bytes:
+            self._flush()
+
+    @property
+    def tile_count(self) -> int:
+        """Number of tiles added so far (excludes the metadata row)."""
+        return self._tile_count
+
+    def _flush(self) -> None:
+        """Sort buffer by tile_id and write as row groups."""
+        if not self._buffer:
+            return
+
+        self._buffer.sort(key=lambda t: t[0])
+
+        tile_ids = [t[0] for t in self._buffer]
+        data_col = [t[1] for t in self._buffer]
+        metadata_col = [None] * len(self._buffer)
+
+        table = pa.table(
+            {"tile": tile_ids, "metadata": metadata_col, "data": data_col},
+            schema=TILEQUET_SCHEMA,
+        )
+
+        self._writer.write_table(table, row_group_size=self._row_group_size)
+
+        logger.info(
+            "Flushed %d tiles to disk (%d MB buffer)",
+            len(self._buffer),
+            self._buffer_bytes // (1024 * 1024),
+        )
+
+        self._buffer.clear()
+        self._buffer_bytes = 0
+
+    def close(self, metadata: dict) -> None:
+        """Flush remaining tiles, write the metadata row, and close the file."""
+        if self._closed:
+            raise RuntimeError("Writer is already closed")
+
+        self._flush()
+
+        metadata_table = pa.table(
+            {
+                "tile": [METADATA_TILE_ID],
+                "metadata": [json.dumps(metadata)],
+                "data": pa.array([None], type=pa.binary()),
+            },
+            schema=TILEQUET_SCHEMA,
+        )
+        self._writer.write_table(metadata_table, row_group_size=1)
+
+        self._writer.close()
+        self._closed = True
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if not self._closed:
+            try:
+                self._writer.close()
+            except Exception:
+                pass
+            self._closed = True
+        return False

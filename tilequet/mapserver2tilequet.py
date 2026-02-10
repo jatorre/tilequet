@@ -16,7 +16,7 @@ from typing import Any
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import build_tilejson, create_metadata, TileQuetWriter
 from .mbtiles2tilequet import tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -233,7 +233,7 @@ def convert(
     # Build tile URL template
     tile_url_base = f"{service_url}/tile"
 
-    tiles = []
+    writer = TileQuetWriter(output_path, row_group_size=row_group_size)
     tiles_fetched = 0
     tiles_skipped = 0
 
@@ -258,7 +258,7 @@ def convert(
                     continue
 
                 cell = quadbin.tile_to_cell((x, y, z))
-                tiles.append({"tile": cell, "data": data})
+                writer.add_tile(cell, data)
                 tiles_fetched += 1
 
                 if verbose and tiles_fetched % 100 == 0:
@@ -267,7 +267,7 @@ def convert(
     finally:
         client.close()
 
-    if not tiles:
+    if writer.tile_count == 0:
         raise ValueError("No tiles were fetched from the MapServer")
 
     tile_type = tile_type_from_format(meta.tile_format)
@@ -297,20 +297,20 @@ def convert(
         center=center,
         min_zoom=effective_min_zoom,
         max_zoom=effective_max_zoom,
-        num_tiles=len(tiles),
+        num_tiles=writer.tile_count,
         name=meta.name,
         description=meta.description,
         source_format="arcgis_mapserver",
         tilejson=tilejson,
     )
 
-    write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+    writer.close(metadata)
 
     if verbose:
-        logger.info("Written %d tiles to %s", len(tiles), output_path)
+        logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
     return {
-        "num_tiles": len(tiles),
+        "num_tiles": writer.tile_count,
         "tile_type": tile_type,
         "tile_format": meta.tile_format,
         "min_zoom": effective_min_zoom,

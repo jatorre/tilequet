@@ -10,7 +10,7 @@ import sqlite3
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import TileQuetWriter, build_tilejson, create_metadata
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +128,7 @@ def convert(
         center = [float(center_parts[0]), float(center_parts[1]), int(float(center_parts[2]))]
 
         # Read all tiles
-        tiles = []
+        writer = TileQuetWriter(output_path, row_group_size=row_group_size)
         cursor = conn.execute(
             "SELECT zoom_level, tile_column, tile_row, tile_data FROM tiles"
         )
@@ -138,10 +138,10 @@ def convert(
             y = tms_to_xyz_y(zoom, tms_y)
             # Encode as QUADBIN
             cell = quadbin.tile_to_cell((x, y, zoom))
-            tiles.append({"tile": cell, "data": data})
+            writer.add_tile(cell, data)
 
         if verbose:
-            logger.info("Read %d tiles from MBTiles", len(tiles))
+            logger.info("Read %d tiles from MBTiles", writer.tile_count)
 
         # Extract vector_layers from MBTiles json metadata
         vector_layers = None
@@ -188,7 +188,7 @@ def convert(
             center=center,
             min_zoom=min_zoom,
             max_zoom=max_zoom,
-            num_tiles=len(tiles),
+            num_tiles=writer.tile_count,
             name=mb_meta.get("name"),
             description=mb_meta.get("description"),
             attribution=mb_meta.get("attribution"),
@@ -198,13 +198,13 @@ def convert(
         )
 
         # Write TileQuet file
-        write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+        writer.close(metadata)
 
         if verbose:
-            logger.info("Written %d tiles to %s", len(tiles), output_path)
+            logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
         return {
-            "num_tiles": len(tiles),
+            "num_tiles": writer.tile_count,
             "tile_type": tile_type,
             "tile_format": tile_format,
             "min_zoom": min_zoom,

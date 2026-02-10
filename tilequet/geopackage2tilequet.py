@@ -12,7 +12,7 @@ import sqlite3
 
 import quadbin
 
-from .metadata import build_tilejson, create_metadata, write_tilequet
+from .metadata import TileQuetWriter, build_tilejson, create_metadata
 from .mbtiles2tilequet import detect_tile_format, tile_type_from_format
 
 logger = logging.getLogger(__name__)
@@ -119,17 +119,17 @@ def convert(
 
         # Read all tiles
         # GeoPackage uses the same Y convention as XYZ (top-left origin)
-        tiles = []
+        writer = TileQuetWriter(output_path, row_group_size=row_group_size)
         cursor = conn.execute(
             f"SELECT zoom_level, tile_column, tile_row, tile_data FROM \"{table_name}\""
         )
 
         for zoom, x, y, data in cursor:
             cell = quadbin.tile_to_cell((x, y, zoom))
-            tiles.append({"tile": cell, "data": data})
+            writer.add_tile(cell, data)
 
         if verbose:
-            logger.info("Read %d tiles from GeoPackage", len(tiles))
+            logger.info("Read %d tiles from GeoPackage", writer.tile_count)
 
         # Build center from bounds
         center = None
@@ -158,7 +158,7 @@ def convert(
             center=center,
             min_zoom=min_zoom,
             max_zoom=max_zoom,
-            num_tiles=len(tiles),
+            num_tiles=writer.tile_count,
             name=gpkg_name,
             description=gpkg_desc,
             source_format="geopackage",
@@ -166,13 +166,13 @@ def convert(
         )
 
         # Write TileQuet file
-        write_tilequet(output_path, tiles, metadata, row_group_size=row_group_size)
+        writer.close(metadata)
 
         if verbose:
-            logger.info("Written %d tiles to %s", len(tiles), output_path)
+            logger.info("Written %d tiles to %s", writer.tile_count, output_path)
 
         return {
-            "num_tiles": len(tiles),
+            "num_tiles": writer.tile_count,
             "tile_type": tile_type,
             "tile_format": tile_format,
             "min_zoom": min_zoom,
